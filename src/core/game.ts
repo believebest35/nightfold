@@ -3,7 +3,16 @@ import { setupInput, consumeKeyPress } from "./input.ts";
 import { resizeCanvas } from "./resize.ts";
 import { createInitialGameState } from "../model/game-state.ts";
 import type { GameState, RenderContext } from "../model/types.ts";
-import { palette } from "../config/palette.ts";
+import { gameConfig } from "../config/game-config.ts";
+import { generateStraightRoad, type GeneratedRoad } from "../world/road-generator.ts";
+import { getSegmentsAhead, getRoadYAtZ } from "../world/road-query.ts";
+import { renderFrame, type RenderState } from "../render/renderer.ts";
+
+/** Constant auto-drive speed for Phase 1 (half of maxSpeed). */
+const AUTO_SPEED = gameConfig.maxSpeed / 2;
+
+/** Number of segments in the loop. */
+const SEGMENT_COUNT = 500;
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -11,6 +20,8 @@ export class Game {
   private gameState: GameState;
   private renderCtx: RenderContext;
   private fpsFrames: number[] = [];
+  private road: GeneratedRoad;
+  private debugMode = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -20,6 +31,7 @@ export class Game {
     }
     this.ctx = ctx;
     this.gameState = createInitialGameState();
+    this.road = generateStraightRoad(SEGMENT_COUNT);
 
     const dims = resizeCanvas(this.canvas);
     this.renderCtx = {
@@ -36,7 +48,7 @@ export class Game {
 
     const loop = createGameLoop(
       (dt) => { this.update(dt); },
-      (alpha) => { this.render(alpha); },
+      (_alpha) => { this.render(); },
     );
     loop.start();
   }
@@ -54,27 +66,60 @@ export class Game {
       this.gameState.paused = !this.gameState.paused;
     }
 
+    // Toggle debug mode
+    if (consumeKeyPress("`")) {
+      this.debugMode = !this.debugMode;
+    }
+
     if (this.gameState.paused) {
       return;
     }
 
+    // Auto-drive: constant forward speed
+    this.gameState.positionZ += AUTO_SPEED * dt;
+    this.gameState.speed = AUTO_SPEED;
+    this.gameState.distanceTravelled += AUTO_SPEED * dt;
     this.gameState.elapsedSeconds += dt;
+
+    // Wrap position for loop
+    this.gameState.positionZ =
+      ((this.gameState.positionZ % this.road.totalLength) + this.road.totalLength) %
+      this.road.totalLength;
   }
 
-  private render(_alpha: number): void {
+  private render(): void {
     const { ctx, width, height, dpr } = this.renderCtx;
 
     ctx.save();
     ctx.scale(dpr, dpr);
 
-    // Clear with dark background
-    ctx.fillStyle = palette.skyTop;
-    ctx.fillRect(0, 0, width, height);
+    // Main scene render
+    const segmentsAhead = getSegmentsAhead(
+      this.road.segments,
+      this.road.totalLength,
+      this.gameState.positionZ,
+      gameConfig.drawDistance,
+    );
 
-    // Draw debug text
+    const roadY = getRoadYAtZ(
+      this.road.segments,
+      this.road.totalLength,
+      this.gameState.positionZ,
+    );
+
+    const renderState: RenderState = {
+      cameraX: 0,
+      cameraY: roadY + gameConfig.cameraHeight,
+      cameraZ: this.gameState.positionZ,
+      debug: this.debugMode,
+    };
+
+    renderFrame(ctx, this.renderCtx, segmentsAhead, renderState);
+
+    // Debug overlay on top
     this.drawDebugOverlay(width, height);
 
-    // Draw pause overlay
+    // Pause overlay
     if (this.gameState.paused) {
       this.drawPauseOverlay(width, height);
     }
@@ -107,8 +152,11 @@ export class Game {
       `FPS: ${fps}`,
       `Window: ${width}×${Math.round(window.innerHeight)}`,
       `DPR: ${window.devicePixelRatio}`,
+      `Speed: ${Math.round(this.gameState.speed)}`,
+      `PosZ: ${Math.round(this.gameState.positionZ)}`,
+      `Dist: ${Math.round(this.gameState.distanceTravelled)}`,
+      `Debug: ${this.debugMode ? "ON" : "OFF"} (\`)`,
       `Paused: ${this.gameState.paused ? "Yes" : "No"}`,
-      `Time: ${this.gameState.elapsedSeconds.toFixed(1)}s`,
     ];
 
     lines.forEach((line, i) => {
