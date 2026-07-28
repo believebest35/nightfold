@@ -1,0 +1,16 @@
+export const palette = {
+  skyTop: "#050711",
+  skyBottom: "#12182a",
+  fog: "#202840",
+  road: "#171a22",
+  roadAlt: "#1c202a",
+  lane: "#d8d2b8",
+  guardrail: "#596273",
+  buildingNear: "#111521",
+  buildingFar: "#161b2b",
+  windowWarm: "#f0b85a",
+  neonCyan: "#42d9e8",
+  neonMagenta: "#df4caa",
+  tailLight: "#ff304f",
+  headLight: "#fff1c4",
+} as const;
