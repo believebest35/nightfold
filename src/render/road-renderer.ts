@@ -4,9 +4,9 @@ import { gameConfig } from "../config/game-config.ts";
 import { palette } from "../config/palette.ts";
 
 const SHOULDER_WIDTH_FACTOR = 1.4;
-const EDGE_LINE_WIDTH_FACTOR = 0.25;
-const CENTER_LINE_WIDTH_FACTOR = 0.08;
-const LANE_MARKER_WIDTH_FACTOR = 0.20;
+const EDGE_LINE_WIDTH_FACTOR = 0.05;
+const CENTER_LINE_WIDTH_FACTOR = 0.015;
+const LANE_MARKER_WIDTH_FACTOR = 0.05;
 
 interface RoadDrawState {
   /** Highest screen Y drawn so far (lowest on screen). Used for clipY occlusion. */
@@ -82,8 +82,8 @@ export function renderRoad(
     drawTrapezoid(ctx, centerXTop, centerXBottom, halfWidthTop, halfWidthBottom, clipTopY, clipBottomY, roadColor);
 
     // 3. Road edge lines (bright borders at road limits)
-    const edgeWidthTop = Math.max(halfWidthTop * EDGE_LINE_WIDTH_FACTOR, 6);
-    const edgeWidthBottom = Math.max(halfWidthBottom * EDGE_LINE_WIDTH_FACTOR, 6);
+    const edgeWidthTop = Math.max(halfWidthTop * EDGE_LINE_WIDTH_FACTOR, 2);
+    const edgeWidthBottom = Math.max(halfWidthBottom * EDGE_LINE_WIDTH_FACTOR, 2);
     // Left edge
     drawTrapezoid(
       ctx,
@@ -108,8 +108,8 @@ export function renderRoad(
     );
 
     // 4. Continuous center line
-    const centerHalfTop = Math.max(halfWidthTop * CENTER_LINE_WIDTH_FACTOR, 4);
-    const centerHalfBottom = Math.max(halfWidthBottom * CENTER_LINE_WIDTH_FACTOR, 4);
+    const centerHalfTop = Math.max(halfWidthTop * CENTER_LINE_WIDTH_FACTOR, 1);
+    const centerHalfBottom = Math.max(halfWidthBottom * CENTER_LINE_WIDTH_FACTOR, 1);
     drawTrapezoid(ctx, centerXTop, centerXBottom, centerHalfTop, centerHalfBottom, clipTopY, clipBottomY, palette.headLight);
 
     // 5. Dashed lane markings overlay (thicker, every rumbleLength segments)
