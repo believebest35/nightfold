@@ -1,45 +1,42 @@
-import type { RoadSegment, RoadPoint, SceneryObject } from "../model/types.ts";
+import type { RoadSegment } from "../model/types.ts";
 import { gameConfig } from "../config/game-config.ts";
+import { RoadBuilder } from "./road-builder.ts";
 
-/**
- * Generate a flat, straight, looping road for Phase 1.
- *
- * All segments share worldY = 0, curve = 0, and city zone.
- * The road is a simple closed loop — the camera wraps around
- * when it exceeds totalLength.
- */
 export interface GeneratedRoad {
   segments: RoadSegment[];
   totalLength: number;
 }
 
+/** Straight flat looping road (used by tests and Phase 1 debugging). */
 export function generateStraightRoad(segmentCount: number): GeneratedRoad {
-  const segments: RoadSegment[] = [];
+  const builder = new RoadBuilder();
+  builder.addStraight(segmentCount);
+  return builder.build();
+}
 
-  for (let i = 0; i < segmentCount; i++) {
-    const zStart = i * gameConfig.segmentLength;
-    const zEnd = zStart + gameConfig.segmentLength;
+/**
+ * The Phase 2 MVP road recipe:
+ * straight → right curve (uphill approach) → hill → S-curves →
+ * long left curve → dip → balancing right curve → straight.
+ *
+ * Curvature is exactly balanced (Σcurve = 0) and height returns to
+ * zero, so the loop joins without visual discontinuity.
+ */
+export function buildDefaultRoad(): GeneratedRoad {
+  const builder = new RoadBuilder();
+  builder
+    .addStraight(20)
+    .addCurve(10, 20, 10, 0.35)
+    .addHill(20, 40, 20, 1200)
+    .addSCurves()
+    .addCurve(15, 30, 15, -0.5)
+    .addHill(20, 40, 20, -800)
+    .addCurve(10, 20, 10, 0.4)
+    .addStraight(20);
+  return builder.build();
+}
 
-    const p1: RoadPoint = {
-      world: { worldX: 0, worldY: 0, worldZ: zStart },
-    };
-    const p2: RoadPoint = {
-      world: { worldX: 0, worldY: 0, worldZ: zEnd },
-    };
-
-    segments.push({
-      index: i,
-      p1,
-      p2,
-      curve: 0,
-      zone: "city",
-      colorVariant: (i % 2) as 0 | 1,
-      scenery: [] as SceneryObject[],
-    });
-  }
-
-  return {
-    segments,
-    totalLength: segmentCount * gameConfig.segmentLength,
-  };
+/** Length of the loop in world units. */
+export function roadTotalLength(segments: RoadSegment[]): number {
+  return segments.length * gameConfig.segmentLength;
 }

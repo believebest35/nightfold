@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { generateStraightRoad } from "../world/road-generator.ts";
-import { getSegmentsAhead, findSegmentAtZ, getRoadYAtZ } from "../world/road-query.ts";
+import { generateStraightRoad, buildDefaultRoad } from "../world/road-generator.ts";
+import {
+  getSegmentsAhead,
+  findSegmentAtZ,
+  getRoadYAtZ,
+  getRoadStateAtZ,
+  expandSegmentZ,
+} from "../world/road-query.ts";
 
 describe("generateStraightRoad", () => {
   it("creates the requested number of segments", () => {
@@ -120,5 +126,48 @@ describe("getRoadYAtZ", () => {
 
   it("returns 0 for empty segments", () => {
     expect(getRoadYAtZ([], 0, 0)).toBe(0);
+  });
+});
+
+describe("getRoadStateAtZ", () => {
+  it("returns zero offset and rate on a straight road", () => {
+    const road = generateStraightRoad(100);
+    const state = getRoadStateAtZ(road.segments, road.totalLength, 3000);
+    expect(state.offset).toBe(0);
+    expect(state.offsetRate).toBe(0);
+  });
+
+  it("accumulates offset from segment 0 to the containing segment", () => {
+    const road = buildDefaultRoad();
+    // Far into the loop; offset must have accumulated the left-turn section.
+    const state = getRoadStateAtZ(road.segments, road.totalLength, road.totalLength / 2);
+    expect(state.offsetRate).not.toBe(0);
+  });
+
+  it("is continuous across the loop boundary (Σcurve = 0)", () => {
+    const road = buildDefaultRoad();
+    const nearEnd = getRoadStateAtZ(road.segments, road.totalLength, road.totalLength - 1);
+    const atStart = getRoadStateAtZ(road.segments, road.totalLength, 1);
+    // The recipe is balanced: direction at loop end ≈ direction at start.
+    expect(nearEnd.offsetRate).toBeCloseTo(atStart.offsetRate, 6);
+  });
+});
+
+describe("expandSegmentZ", () => {
+  const road = generateStraightRoad(100);
+
+  it("leaves ahead segments unchanged", () => {
+    // Camera at Z=500 (segment 2): segment 5 starts at 1000, ahead — unchanged.
+    const seg = road.segments[5];
+    if (!seg) throw new Error("missing segment");
+    expect(expandSegmentZ(seg, road.totalLength, 500)).toBe(seg.p1.world.worldZ);
+  });
+
+  it("adds totalLength to wrapped segments", () => {
+    const seg = road.segments[0];
+    if (!seg) throw new Error("missing segment");
+    expect(expandSegmentZ(seg, road.totalLength, 19500)).toBe(
+      seg.p1.world.worldZ + road.totalLength,
+    );
   });
 });

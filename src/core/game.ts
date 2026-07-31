@@ -1,18 +1,21 @@
 import { createGameLoop } from "./game-loop.ts";
-import { setupInput, consumeKeyPress } from "./input.ts";
+import { setupInput, consumeKeyPress, readInput } from "./input.ts";
 import { resizeCanvas } from "./resize.ts";
+import { updateDriving } from "./physics.ts";
 import { createInitialGameState } from "../model/game-state.ts";
 import type { GameState, RenderContext } from "../model/types.ts";
 import { gameConfig } from "../config/game-config.ts";
-import { generateStraightRoad, type GeneratedRoad } from "../world/road-generator.ts";
-import { getSegmentsAhead, getRoadYAtZ } from "../world/road-query.ts";
+import { buildDefaultRoad, type GeneratedRoad } from "../world/road-generator.ts";
+import {
+  getSegmentsAhead,
+  getRoadYAtZ,
+  getRoadStateAtZ,
+  findSegmentAtZ,
+} from "../world/road-query.ts";
 import { renderFrame, type RenderState } from "../render/renderer.ts";
 
-/** Constant auto-drive speed for Phase 1 (half of maxSpeed). */
-const AUTO_SPEED = gameConfig.maxSpeed / 2;
-
-/** Number of segments in the loop. */
-const SEGMENT_COUNT = 500;
+/** Amplitude of the off-road screen shake, in logical pixels. */
+const OFF_ROAD_SHAKE_MAX = 6;
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -31,7 +34,7 @@ export class Game {
     }
     this.ctx = ctx;
     this.gameState = createInitialGameState();
-    this.road = generateStraightRoad(SEGMENT_COUNT);
+    this.road = buildDefaultRoad();
 
     const dims = resizeCanvas(this.canvas);
     this.renderCtx = {
@@ -66,6 +69,11 @@ export class Game {
       this.gameState.paused = !this.gameState.paused;
     }
 
+    // Reset to road center
+    if (consumeKeyPress("r")) {
+      this.gameState.playerX = 0;
+    }
+
     // Toggle debug mode
     if (consumeKeyPress("`")) {
       this.debugMode = !this.debugMode;
@@ -75,10 +83,14 @@ export class Game {
       return;
     }
 
-    // Auto-drive: constant forward speed
-    this.gameState.positionZ += AUTO_SPEED * dt;
-    this.gameState.speed = AUTO_SPEED;
-    this.gameState.distanceTravelled += AUTO_SPEED * dt;
+    const input = readInput();
+    const playerSegment = findSegmentAtZ(
+      this.road.segments,
+      this.road.totalLength,
+      this.gameState.positionZ,
+    );
+    updateDriving(this.gameState, input, playerSegment?.curve ?? 0, dt);
+
     this.gameState.elapsedSeconds += dt;
 
     // Wrap position for loop
@@ -92,6 +104,14 @@ export class Game {
 
     ctx.save();
     ctx.scale(dpr, dpr);
+
+    // Off-road shake: small horizontal offset growing with how far the
+    // player has left the asphalt. Subtle, never screen-sickness level.
+    if (Math.abs(this.gameState.playerX) > 1) {
+      const depth = Math.abs(this.gameState.playerX) - 1;
+      const shake = Math.min(depth * 8, OFF_ROAD_SHAKE_MAX) * Math.sign(this.gameState.playerX);
+      ctx.translate(shake, 0);
+    }
 
     // Main scene render
     const segmentsAhead = getSegmentsAhead(
@@ -107,10 +127,18 @@ export class Game {
       this.gameState.positionZ,
     );
 
+    const roadState = getRoadStateAtZ(
+      this.road.segments,
+      this.road.totalLength,
+      this.gameState.positionZ,
+    );
+
     const renderState: RenderState = {
-      cameraX: 0,
       cameraY: roadY + gameConfig.cameraHeight,
       cameraZ: this.gameState.positionZ,
+      playerX: this.gameState.playerX,
+      roadOffsetRate: roadState.offsetRate,
+      totalLength: this.road.totalLength,
       debug: this.debugMode,
     };
 
@@ -143,6 +171,9 @@ export class Game {
     }
     const fps = this.fpsFrames.length;
 
+    const speedPercent = Math.round((this.gameState.speed / gameConfig.maxSpeed) * 100);
+    const offRoad = Math.abs(this.gameState.playerX) > 1;
+
     ctx.save();
     ctx.font = "14px monospace";
     ctx.fillStyle = "#42d9e8";
@@ -152,7 +183,7 @@ export class Game {
       `FPS: ${fps}`,
       `Window: ${width}×${Math.round(window.innerHeight)}`,
       `DPR: ${window.devicePixelRatio}`,
-      `Speed: ${Math.round(this.gameState.speed)}`,
+      `Speed: ${speedPercent}%`,
       `PosZ: ${Math.round(this.gameState.positionZ)}`,
       `Dist: ${Math.round(this.gameState.distanceTravelled)}`,
       `Debug: ${this.debugMode ? "ON" : "OFF"} (\`)`,
@@ -162,6 +193,12 @@ export class Game {
     lines.forEach((line, i) => {
       ctx.fillText(line, 12, 12 + i * 20);
     });
+
+    if (offRoad) {
+      ctx.font = "bold 18px monospace";
+      ctx.fillStyle = "#ff304f";
+      ctx.fillText("OFF ROAD", 12, 12 + lines.length * 20 + 8);
+    }
 
     ctx.restore();
   }

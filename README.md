@@ -57,5 +57,5 @@ Primary target device: MacBook M1 Pro.
 
 ## Project Status
 
-Currently in **Phase 0** — engineering skeleton.
+Currently in **Phase 2** — curves, hills, and driving.
 See `nightfold_impl_docu.md` for the full implementation plan.

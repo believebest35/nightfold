@@ -8,9 +8,14 @@ import { gameConfig } from "../config/game-config.ts";
 import { palette } from "../config/palette.ts";
 
 export interface RenderState {
-  cameraX: number;
   cameraY: number;
   cameraZ: number;
+  /** Normalized player lateral position, road edges at ±1. */
+  playerX: number;
+  /** Road direction derivative at the camera (dx), for curve rendering. */
+  roadOffsetRate: number;
+  /** Total loop length, for wrapped Z expansion. */
+  totalLength: number;
   debug: boolean;
 }
 
@@ -42,7 +47,7 @@ export function renderFrame(
   // 3. Road
   const cameraDepth = computeCameraDepth(gameConfig.cameraFovDegrees);
   const projParams: ProjectionParams = {
-    cameraX: state.cameraX,
+    cameraX: state.playerX * gameConfig.roadHalfWidth,
     cameraY: state.cameraY,
     cameraZ: state.cameraZ,
     cameraDepth,
@@ -51,7 +56,18 @@ export function renderFrame(
     roadHalfWidth: gameConfig.roadHalfWidth,
   };
 
-  renderRoad(ctx, segments, projParams, renderCtx, state.debug);
+  renderRoad(
+    ctx,
+    segments,
+    projParams,
+    renderCtx,
+    state.debug,
+    {
+      offsetRate: state.roadOffsetRate,
+      playerWorldX: state.playerX * gameConfig.roadHalfWidth,
+      totalLength: state.totalLength,
+    },
+  );
 }
 
 function drawSkyGradient(ctx: CanvasRenderingContext2D, width: number, height: number): void {
