@@ -20,6 +20,10 @@ export interface RenderState {
  * 2. Ground / grass
  * 3. Road segments (far to near)
  * 4. Debug overlay is handled by Game directly
+ *
+ * NOTE: The DPR transform is owned exclusively by Game.render().
+ * This function must NOT scale the context — doing so would compound
+ * the DPR factor (dpr²) and push the scene off-canvas at DPR > 1.
  */
 export function renderFrame(
   ctx: CanvasRenderingContext2D,
@@ -27,10 +31,7 @@ export function renderFrame(
   segments: RoadSegment[],
   state: RenderState,
 ): void {
-  const { width, height, dpr } = renderCtx;
-
-  ctx.save();
-  ctx.scale(dpr, dpr);
+  const { width, height } = renderCtx;
 
   // 1. Sky gradient
   drawSkyGradient(ctx, width, height);
@@ -51,8 +52,6 @@ export function renderFrame(
   };
 
   renderRoad(ctx, segments, projParams, renderCtx, state.debug);
-
-  ctx.restore();
 }
 
 function drawSkyGradient(ctx: CanvasRenderingContext2D, width: number, height: number): void {
