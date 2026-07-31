@@ -57,5 +57,5 @@ Primary target device: MacBook M1 Pro.
 
 ## Project Status
 
-Currently in **Phase 2** — curves, hills, and driving.
+Currently in **Phase 3** — night city visuals.
 See `nightfold_impl_docu.md` for the full implementation plan.

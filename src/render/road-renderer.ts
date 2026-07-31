@@ -120,58 +120,62 @@ export function renderRoad(
     const roadColor = seg.colorVariant === 0 ? palette.road : palette.roadAlt;
     drawTrapezoid(ctx, centerXTop, centerXBottom, halfWidthTop, halfWidthBottom, clipTopY, clipBottomY, roadColor);
 
-    // 3. Road edge lines
-    const edgeWidthTop = Math.max(halfWidthTop * EDGE_LINE_WIDTH_FACTOR, 2);
-    const edgeWidthBottom = Math.max(halfWidthBottom * EDGE_LINE_WIDTH_FACTOR, 2);
-    drawTrapezoid(
-      ctx,
-      centerXTop - halfWidthTop,
-      centerXBottom - halfWidthBottom,
-      edgeWidthTop,
-      edgeWidthBottom,
-      clipTopY,
-      clipBottomY,
-      palette.headLight,
-    );
-    drawTrapezoid(
-      ctx,
-      centerXTop + halfWidthTop,
-      centerXBottom + halfWidthBottom,
-      edgeWidthTop,
-      edgeWidthBottom,
-      clipTopY,
-      clipBottomY,
-      palette.headLight,
-    );
+    // 3-5. Line details only on near segments — far away they would
+    // render as constant-width bright specks (plan §12.5: far = fewer details).
+    if (halfWidthBottom > 30) {
+      // 3. Road edge lines
+      const edgeWidthTop = Math.max(halfWidthTop * EDGE_LINE_WIDTH_FACTOR, 2);
+      const edgeWidthBottom = Math.max(halfWidthBottom * EDGE_LINE_WIDTH_FACTOR, 2);
+      drawTrapezoid(
+        ctx,
+        centerXTop - halfWidthTop,
+        centerXBottom - halfWidthBottom,
+        edgeWidthTop,
+        edgeWidthBottom,
+        clipTopY,
+        clipBottomY,
+        palette.headLight,
+      );
+      drawTrapezoid(
+        ctx,
+        centerXTop + halfWidthTop,
+        centerXBottom + halfWidthBottom,
+        edgeWidthTop,
+        edgeWidthBottom,
+        clipTopY,
+        clipBottomY,
+        palette.headLight,
+      );
 
-    // 4. Continuous center line
-    const centerHalfTop = Math.max(halfWidthTop * CENTER_LINE_WIDTH_FACTOR, 1);
-    const centerHalfBottom = Math.max(halfWidthBottom * CENTER_LINE_WIDTH_FACTOR, 1);
-    drawTrapezoid(
-      ctx,
-      centerXTop,
-      centerXBottom,
-      centerHalfTop,
-      centerHalfBottom,
-      clipTopY,
-      clipBottomY,
-      palette.lane,
-    );
-
-    // 5. Dashed lane markings overlay
-    if (seg.index % gameConfig.rumbleLength === 0) {
-      const laneHalfTop = halfWidthTop * LANE_MARKER_WIDTH_FACTOR;
-      const laneHalfBottom = halfWidthBottom * LANE_MARKER_WIDTH_FACTOR;
+      // 4. Continuous center line
+      const centerHalfTop = Math.max(halfWidthTop * CENTER_LINE_WIDTH_FACTOR, 1);
+      const centerHalfBottom = Math.max(halfWidthBottom * CENTER_LINE_WIDTH_FACTOR, 1);
       drawTrapezoid(
         ctx,
         centerXTop,
         centerXBottom,
-        laneHalfTop,
-        laneHalfBottom,
+        centerHalfTop,
+        centerHalfBottom,
         clipTopY,
         clipBottomY,
         palette.lane,
       );
+
+      // 5. Dashed lane markings overlay
+      if (seg.index % gameConfig.rumbleLength === 0) {
+        const laneHalfTop = halfWidthTop * LANE_MARKER_WIDTH_FACTOR;
+        const laneHalfBottom = halfWidthBottom * LANE_MARKER_WIDTH_FACTOR;
+        drawTrapezoid(
+          ctx,
+          centerXTop,
+          centerXBottom,
+          laneHalfTop,
+          laneHalfBottom,
+          clipTopY,
+          clipBottomY,
+          palette.lane,
+        );
+      }
     }
 
     // Debug: segment boundaries

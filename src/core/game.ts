@@ -13,6 +13,8 @@ import {
   findSegmentAtZ,
 } from "../world/road-query.ts";
 import { renderFrame, type RenderState } from "../render/renderer.ts";
+import { SkyRenderer } from "../render/sky-renderer.ts";
+import { attachScenery } from "../world/scenery-generator.ts";
 
 /** Amplitude of the off-road screen shake, in logical pixels. */
 const OFF_ROAD_SHAKE_MAX = 6;
@@ -24,6 +26,7 @@ export class Game {
   private renderCtx: RenderContext;
   private fpsFrames: number[] = [];
   private road: GeneratedRoad;
+  private sky: SkyRenderer;
   private debugMode = false;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -35,6 +38,8 @@ export class Game {
     this.ctx = ctx;
     this.gameState = createInitialGameState();
     this.road = buildDefaultRoad();
+    attachScenery(this.road.segments, gameConfig.worldSeed);
+    this.sky = new SkyRenderer(gameConfig.worldSeed);
 
     const dims = resizeCanvas(this.canvas);
     this.renderCtx = {
@@ -142,7 +147,7 @@ export class Game {
       debug: this.debugMode,
     };
 
-    renderFrame(ctx, this.renderCtx, segmentsAhead, renderState);
+    renderFrame(ctx, this.renderCtx, segmentsAhead, renderState, this.sky);
 
     // Debug overlay on top
     this.drawDebugOverlay(width, height);
