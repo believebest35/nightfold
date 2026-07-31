@@ -1,89 +1,100 @@
-import type { RoadSegment, SceneryObject } from "../model/types.ts";
-import { projectWorldPoint, type ProjectionParams } from "./projection.ts";
+import type { ProjectedSegment } from "./projected-segment.ts";
+import type { ProjectionParams } from "./projection.ts";
+import type { SceneryObject } from "../model/types.ts";
+import { projectWorldPoint } from "./projection.ts";
 import { colorRgba, fogFactor, mixWithFog, parseHex } from "./fog.ts";
 import { palette } from "../config/palette.ts";
 
-/** Skip objects whose projected half-width or height falls below this. */
+/** Skip objects whose projected half-width falls below this (px). */
 const MIN_SCREEN_HALF_WIDTH = 2;
 /** Only draw window details on buildings at least this tall on screen. */
 const WINDOW_MIN_HEIGHT = 90;
 /** Only draw streetlight halos within this world distance. */
 const HALO_MAX_Z = 9000;
+/** Max window cell size on screen (px) — keeps near windows small. */
+const MAX_WINDOW_WIDTH = 12;
+const MAX_WINDOW_HEIGHT = 16;
 
 const buildingNearRgb = parseHex(palette.buildingNear);
 const buildingFarRgb = parseHex(palette.buildingFar);
 
 /**
- * Draw scenery objects bound to the road segments ahead, far to near.
+ * Draw the scenery bound to one projected segment.
  *
- * Deterministic detail: building window layouts are derived from the
- * object id hash, so they never change between frames (plan §9).
+ * The caller iterates far → near in the same pass as the road, so a
+ * near building correctly occludes a farther road edge. Object world
+ * positions derive from the ProjectedSegment's road center and
+ * loop-expanded Z — never from raw segment data.
  */
-export function renderScenery(
+export function renderSceneryForSegment(
   ctx: CanvasRenderingContext2D,
-  segments: RoadSegment[],
+  ps: ProjectedSegment,
   params: ProjectionParams,
 ): void {
-  // Far to near, matching the road draw order so buildings sit correctly
-  // against the road they belong to.
-  for (let i = segments.length - 1; i >= 0; i--) {
-    const seg = segments[i];
-    if (!seg) continue;
-    for (const obj of seg.scenery) {
-      renderObject(ctx, obj, seg, params);
-    }
+  for (const obj of ps.seg.scenery) {
+    renderObject(ctx, obj, ps, params);
   }
 }
 
 function renderObject(
   ctx: CanvasRenderingContext2D,
   obj: SceneryObject,
-  seg: RoadSegment,
+  ps: ProjectedSegment,
   params: ProjectionParams,
 ): void {
   switch (obj.kind) {
     case "building":
-      renderBuilding(ctx, obj, seg, params);
+      renderBuilding(ctx, obj, ps, params);
       break;
     case "streetlight":
-      renderStreetlight(ctx, obj, seg, params);
+      renderStreetlight(ctx, obj, ps, params);
       break;
     case "guardrail":
-      renderGuardrail(ctx, obj, seg, params);
+      renderGuardrail(ctx, obj, ps, params);
       break;
     default:
       break; // sign/tunnel-frame arrive with their zones in Phase 4
   }
 }
 
-/** Horizontal world offset for an object, signed by side. */
+/** Horizontal offset from the road center, signed by side. */
 function sideOffset(obj: SceneryObject): number {
   return obj.side === "left" ? -obj.offset : obj.offset;
+}
+
+/** World X of the object: road center at this segment + its own offset. */
+function objectWorldX(ps: ProjectedSegment, obj: SceneryObject): number {
+  return ps.centerOffsetNear + sideOffset(obj);
+}
+
+/** Fog factor for the segment this object belongs to. */
+function segmentFog(ps: ProjectedSegment, params: ProjectionParams): number {
+  return fogFactor(ps.zBase - params.cameraZ);
 }
 
 function renderBuilding(
   ctx: CanvasRenderingContext2D,
   obj: SceneryObject,
-  seg: RoadSegment,
+  ps: ProjectedSegment,
   params: ProjectionParams,
 ): void {
-  const worldX = sideOffset(obj);
-  const groundY = seg.p1.world.worldY;
+  const worldX = objectWorldX(ps, obj);
+  const groundY = ps.seg.p1.world.worldY;
   const halfWidth = obj.width / 2;
 
   const base = projectWorldPoint(
-    { worldX, worldY: groundY, worldZ: seg.p1.world.worldZ },
+    { worldX, worldY: groundY, worldZ: ps.zBase },
     { ...params, roadHalfWidth: halfWidth },
   );
-  if (base.scale <= 0 || base.halfWidth < MIN_SCREEN_HALF_WIDTH) return;
+  if (base.halfWidth < MIN_SCREEN_HALF_WIDTH) return;
 
   const top = projectWorldPoint(
-    { worldX, worldY: groundY + obj.height, worldZ: seg.p1.world.worldZ },
+    { worldX, worldY: groundY + obj.height, worldZ: ps.zBase },
     { ...params, roadHalfWidth: halfWidth * 0.85 },
   );
   if (top.y >= base.y) return;
 
-  const t = fogFactor(seg.p1.world.worldZ - params.cameraZ);
+  const t = segmentFog(ps, params);
   const baseRgb = obj.colorVariant === 0 ? buildingNearRgb : buildingFarRgb;
   ctx.fillStyle = mixWithFog(baseRgb, t);
 
@@ -97,8 +108,9 @@ function renderBuilding(
   ctx.fill();
 
   // Window lights: deterministic from the id hash, only on near buildings.
-  if (base.y - top.y >= WINDOW_MIN_HEIGHT && t < 0.45) {
-    drawWindows(ctx, obj, base, top);
+  const screenHeight = base.y - top.y;
+  if (screenHeight >= WINDOW_MIN_HEIGHT && t < 0.45) {
+    drawWindows(ctx, obj, base, top, screenHeight);
   }
 }
 
@@ -107,22 +119,29 @@ function drawWindows(
   obj: SceneryObject,
   base: { x: number; y: number; halfWidth: number },
   top: { x: number; y: number; halfWidth: number },
+  screenHeight: number,
 ): void {
   const hash = hashString(obj.id);
-  const columns = 2 + (hash % 3); // 2-4 columns
-  const rows = 3 + ((hash >> 3) % 3); // 3-5 rows
+
+  // Grid density scales with screen size so big near buildings get more,
+  // smaller windows instead of a few huge yellow rectangles.
+  const columns = clamp(Math.floor((base.halfWidth * 2) / 28), 2, 8);
+  const rows = clamp(Math.floor(screenHeight / 34), 3, 10);
+
   const stepX = (base.halfWidth * 2) / (columns + 1);
-  const stepY = (base.y - top.y) / (rows + 1);
+  const stepY = screenHeight / (rows + 1);
+  const winW = Math.min(stepX * 0.36, MAX_WINDOW_WIDTH);
+  const winH = Math.min(stepY * 0.4, MAX_WINDOW_HEIGHT);
 
   ctx.fillStyle = palette.windowWarm;
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < columns; col++) {
       // ~45% of windows are lit; layout is stable per object.
-      const bit = (hash >> (row * 4 + col)) & 1;
+      const bit = (hash >> (row * 5 + col)) & 1;
       if (bit === 0) continue;
       const cx = base.x + (col + 1 - (columns + 1) / 2) * stepX;
       const cy = top.y + (row + 1) * stepY;
-      ctx.fillRect(cx - stepX * 0.18, cy - stepY * 0.3, stepX * 0.36, stepY * 0.4);
+      ctx.fillRect(cx - winW / 2, cy - winH / 2, winW, winH);
     }
   }
 }
@@ -130,26 +149,26 @@ function drawWindows(
 function renderStreetlight(
   ctx: CanvasRenderingContext2D,
   obj: SceneryObject,
-  seg: RoadSegment,
+  ps: ProjectedSegment,
   params: ProjectionParams,
 ): void {
-  const worldX = sideOffset(obj);
-  const groundY = seg.p1.world.worldY;
+  const worldX = objectWorldX(ps, obj);
+  const groundY = ps.seg.p1.world.worldY;
 
   const base = projectWorldPoint(
-    { worldX, worldY: groundY, worldZ: seg.p1.world.worldZ },
+    { worldX, worldY: groundY, worldZ: ps.zBase },
     { ...params, roadHalfWidth: obj.width / 2 },
   );
-  if (base.scale <= 0 || base.halfWidth < MIN_SCREEN_HALF_WIDTH * 0.5) return;
+  if (base.halfWidth < MIN_SCREEN_HALF_WIDTH * 0.5) return;
 
   const top = projectWorldPoint(
-    { worldX, worldY: groundY + obj.height, worldZ: seg.p1.world.worldZ },
+    { worldX, worldY: groundY + obj.height, worldZ: ps.zBase },
     params,
   );
   if (top.y >= base.y) return;
 
-  const relativeZ = seg.p1.world.worldZ - params.cameraZ;
-  const t = fogFactor(relativeZ);
+  const relativeZ = ps.zBase - params.cameraZ;
+  const t = segmentFog(ps, params);
 
   // Pole
   ctx.strokeStyle = mixWithFog(parseHex(palette.guardrail), t);
@@ -181,27 +200,31 @@ function renderStreetlight(
 function renderGuardrail(
   ctx: CanvasRenderingContext2D,
   obj: SceneryObject,
-  seg: RoadSegment,
+  ps: ProjectedSegment,
   params: ProjectionParams,
 ): void {
-  const worldX = sideOffset(obj);
-  const groundY = seg.p1.world.worldY;
+  const worldX = objectWorldX(ps, obj);
+  const groundY = ps.seg.p1.world.worldY;
 
   const base = projectWorldPoint(
-    { worldX, worldY: groundY, worldZ: seg.p1.world.worldZ },
+    { worldX, worldY: groundY, worldZ: ps.zBase },
     { ...params, roadHalfWidth: obj.width / 2 },
   );
-  if (base.scale <= 0 || base.halfWidth < MIN_SCREEN_HALF_WIDTH * 0.4) return;
+  if (base.halfWidth < MIN_SCREEN_HALF_WIDTH * 0.4) return;
 
   const top = projectWorldPoint(
-    { worldX, worldY: groundY + obj.height, worldZ: seg.p1.world.worldZ },
+    { worldX, worldY: groundY + obj.height, worldZ: ps.zBase },
     params,
   );
   if (top.y >= base.y) return;
 
-  const t = fogFactor(seg.p1.world.worldZ - params.cameraZ);
+  const t = segmentFog(ps, params);
   ctx.fillStyle = mixWithFog(parseHex(palette.guardrail), t);
   ctx.fillRect(base.x - base.halfWidth, top.y, base.halfWidth * 2, base.y - top.y);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
 /** FNV-1a style stable hash for deterministic per-object details. */

@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { attachScenery } from "../world/scenery-generator.ts";
 import { buildDefaultRoad } from "../world/road-generator.ts";
+import { gameConfig } from "../config/game-config.ts";
 import type { RoadSegment, SceneryObject } from "../model/types.ts";
+
+/** Shoulder half-width in world units. */
+const SHOULDER_HALF_WIDTH = gameConfig.roadHalfWidth * 1.4;
 
 function serialize(scenery: SceneryObject[][]): string {
   return JSON.stringify(
@@ -82,7 +86,21 @@ describe("attachScenery", () => {
     const segments = roadWithScenery(42);
     for (const seg of segments) {
       for (const o of seg.scenery) {
-        expect(o.offset).toBeGreaterThan(1000); // roadHalfWidth
+        expect(o.offset).toBeGreaterThan(gameConfig.roadHalfWidth);
+      }
+    }
+  });
+
+  it("keeps the widest building clear of the shoulder", () => {
+    // Building inner edge = offset - width/2 must stay beyond the
+    // shoulder, even at maximum width (plan §12.5: buildings must not
+    // intrude on the road or shoulder).
+    const segments = roadWithScenery(42);
+    for (const seg of segments) {
+      for (const o of seg.scenery) {
+        if (o.kind !== "building") continue;
+        const innerEdge = o.offset - o.width / 2;
+        expect(innerEdge).toBeGreaterThanOrEqual(SHOULDER_HALF_WIDTH + 100);
       }
     }
   });

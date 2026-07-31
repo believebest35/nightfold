@@ -75,13 +75,18 @@ function makeObject(
       };
     }
     case "building": {
+      // The inner edge (offset - width/2) must clear the shoulder
+      // (roadHalfWidth × 1.4) with a safety gap, no matter the width.
+      const width = rng.range(900, 2600);
+      const shoulderEdge = gameConfig.roadHalfWidth * 1.4;
+      const offset = shoulderEdge + width / 2 + rng.range(150, 500);
       return {
         id: `s${segmentIndex}-building-${side}`,
         kind,
         segmentIndex,
         side,
-        offset: gameConfig.roadHalfWidth * 1.4 + rng.range(200, 1400),
-        width: rng.range(900, 2600),
+        offset,
+        width,
         height: rng.pick(BUILDING_HEIGHTS) + rng.range(-300, 300),
         colorVariant: rng.int(0, 1),
       };

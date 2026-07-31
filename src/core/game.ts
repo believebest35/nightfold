@@ -3,8 +3,10 @@ import { setupInput, consumeKeyPress, readInput } from "./input.ts";
 import { resizeCanvas } from "./resize.ts";
 import { updateDriving } from "./physics.ts";
 import { createInitialGameState } from "../model/game-state.ts";
-import type { GameState, RenderContext } from "../model/types.ts";
+import type { GameState, InputState, RenderContext } from "../model/types.ts";
 import { gameConfig } from "../config/game-config.ts";
+import { palette } from "../config/palette.ts";
+import { colorRgba, parseHex } from "../render/fog.ts";
 import { buildDefaultRoad, type GeneratedRoad } from "../world/road-generator.ts";
 import {
   getSegmentsAhead,
@@ -28,6 +30,8 @@ export class Game {
   private road: GeneratedRoad;
   private sky: SkyRenderer;
   private debugMode = false;
+  /** Acceptance-test hook: ?autodrive=1 simulates a held accelerate key. */
+  private autoDrive = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -40,6 +44,19 @@ export class Game {
     this.road = buildDefaultRoad();
     attachScenery(this.road.segments, gameConfig.worldSeed);
     this.sky = new SkyRenderer(gameConfig.worldSeed);
+
+    // Debug/acceptance URL hooks: ?debug=1, ?z=nnn (initial position),
+    // ?autodrive=1. Kept deliberately minimal — not part of the game UI.
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("debug") === "1") {
+      this.debugMode = true;
+    }
+    const startZ = Number(query.get("z"));
+    if (Number.isFinite(startZ)) {
+      this.gameState.positionZ =
+        ((startZ % this.road.totalLength) + this.road.totalLength) % this.road.totalLength;
+    }
+    this.autoDrive = query.get("autodrive") === "1";
 
     const dims = resizeCanvas(this.canvas);
     this.renderCtx = {
@@ -88,7 +105,9 @@ export class Game {
       return;
     }
 
-    const input = readInput();
+    const input: InputState = this.autoDrive
+      ? { accelerate: true, brake: false, steerLeft: false, steerRight: false }
+      : readInput();
     const playerSegment = findSegmentAtZ(
       this.road.segments,
       this.road.totalLength,
@@ -106,19 +125,17 @@ export class Game {
 
   private render(): void {
     const { ctx, width, height, dpr } = this.renderCtx;
+    const offRoad = Math.abs(this.gameState.playerX) > 1;
 
+    // ---- World layer (off-road shake affects the world and vehicle only) ----
     ctx.save();
     ctx.scale(dpr, dpr);
-
-    // Off-road shake: small horizontal offset growing with how far the
-    // player has left the asphalt. Subtle, never screen-sickness level.
-    if (Math.abs(this.gameState.playerX) > 1) {
+    if (offRoad) {
       const depth = Math.abs(this.gameState.playerX) - 1;
       const shake = Math.min(depth * 8, OFF_ROAD_SHAKE_MAX) * Math.sign(this.gameState.playerX);
       ctx.translate(shake, 0);
     }
 
-    // Main scene render
     const segmentsAhead = getSegmentsAhead(
       this.road.segments,
       this.road.totalLength,
@@ -144,23 +161,62 @@ export class Game {
       playerX: this.gameState.playerX,
       roadOffsetRate: roadState.offsetRate,
       totalLength: this.road.totalLength,
+      distanceTravelled: this.gameState.distanceTravelled,
       debug: this.debugMode,
     };
 
     renderFrame(ctx, this.renderCtx, segmentsAhead, renderState, this.sky);
+    ctx.restore();
 
-    // Debug overlay on top
-    this.drawDebugOverlay(width, height);
-
-    // Pause overlay
+    // ---- Fixed screen-space UI (never shakes) ----
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    this.drawHud(width, height, offRoad);
     if (this.gameState.paused) {
       this.drawPauseOverlay(width, height);
     }
-
     ctx.restore();
   }
 
-  private drawDebugOverlay(width: number, _height: number): void {
+  private drawHud(width: number, height: number, offRoad: boolean): void {
+    if (this.debugMode) {
+      this.drawDebugInfo(width, offRoad);
+    } else {
+      // Clean gameplay view: only an off-road warning and a restrained
+      // speed readout in the corner.
+      if (offRoad) {
+        this.drawOffRoadWarning();
+      }
+      this.drawSpeedOnly(width, height);
+    }
+  }
+
+  private drawSpeedOnly(width: number, height: number): void {
+    const { ctx } = this.renderCtx;
+    const speedPercent = Math.round((this.gameState.speed / gameConfig.maxSpeed) * 100);
+
+    ctx.save();
+    ctx.font = "15px monospace";
+    ctx.fillStyle = colorRgba(parseHex(palette.lane), 0.8);
+    ctx.textAlign = "right";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(`${speedPercent}%`, width - 18, height - 18);
+    ctx.restore();
+  }
+
+  private drawOffRoadWarning(): void {
+    const { ctx } = this.renderCtx;
+
+    ctx.save();
+    ctx.font = "bold 15px monospace";
+    ctx.fillStyle = palette.tailLight;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillText("OFF ROAD", 12, 12);
+    ctx.restore();
+  }
+
+  private drawDebugInfo(width: number, offRoad: boolean): void {
     const { ctx } = this.renderCtx;
     const now = performance.now();
 
@@ -177,11 +233,10 @@ export class Game {
     const fps = this.fpsFrames.length;
 
     const speedPercent = Math.round((this.gameState.speed / gameConfig.maxSpeed) * 100);
-    const offRoad = Math.abs(this.gameState.playerX) > 1;
 
     ctx.save();
     ctx.font = "14px monospace";
-    ctx.fillStyle = "#42d9e8";
+    ctx.fillStyle = palette.neonCyan;
     ctx.textBaseline = "top";
 
     const lines = [
@@ -201,7 +256,7 @@ export class Game {
 
     if (offRoad) {
       ctx.font = "bold 18px monospace";
-      ctx.fillStyle = "#ff304f";
+      ctx.fillStyle = palette.tailLight;
       ctx.fillText("OFF ROAD", 12, 12 + lines.length * 20 + 8);
     }
 
@@ -212,11 +267,11 @@ export class Game {
     const { ctx } = this.renderCtx;
 
     ctx.save();
-    ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.5)"; // standard dimming scrim
     ctx.fillRect(0, 0, width, height);
 
     ctx.font = "48px monospace";
-    ctx.fillStyle = "#d8d2b8";
+    ctx.fillStyle = palette.lane;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("PAUSED", width / 2, height / 2);

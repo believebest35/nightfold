@@ -11,14 +11,23 @@ interface SkylineBlock {
   height: number;
 }
 
+/** Positive modulo, keeps parallax offsets small and continuous. */
+function mod(value: number, m: number): number {
+  return ((value % m) + m) % m;
+}
+
 /**
  * Renders the night sky: gradient, two layered mountain silhouettes,
  * a distant city skyline, and a ground-haze band at the horizon.
  *
+ * Parallax is driven by the monotonically increasing distance travelled,
+ * NOT by the looping camera Z — positionZ wraps to zero every lap and
+ * would jump the background sideways at the loop boundary.
+ *
  * Mountain/skyline geometry is generated once from a seed and cached.
- * The gradient is rebuilt on window resize (plan §13: cache gradients
- * per window size). The skyline scrolls slowly with the camera for
- * parallax without ever popping at the loop boundary (periodic wrap).
+ * The gradient is rebuilt on window resize (plan §13). Ridge and skyline
+ * patterns tile across the whole viewport, even when the viewport is
+ * wider than one pattern period, without gaps or self-intersecting paths.
  */
 export class SkyRenderer {
   private readonly mountainsFar: number[] = [];
@@ -38,10 +47,16 @@ export class SkyRenderer {
     this.skyline = this.makeSkyline(rng, 36);
   }
 
-  render(ctx: CanvasRenderingContext2D, width: number, height: number, cameraZ: number): void {
+  render(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    distanceTravelled: number,
+  ): void {
     this.ensureGradient(ctx, width, height);
 
     const horizonY = height / 2;
+    const span = this.skylineWidth;
     ctx.save();
 
     // 1. Sky gradient
@@ -50,16 +65,18 @@ export class SkyRenderer {
       ctx.fillRect(0, 0, width, horizonY + 1);
     }
 
+    // Parallax offsets from continuous distance; mod keeps values small
+    // and the wrap is invisible because the pattern period is `span`.
     // 2. Far mountains (parallax 0.02, slow)
-    const farOffset = -(cameraZ * 0.02) % this.skylineWidth;
+    const farOffset = mod(-distanceTravelled * 0.02, span);
     this.drawRidge(ctx, this.mountainsFar, farOffset, horizonY, width, height, palette.mountainFar);
 
     // 3. Near mountains (parallax 0.04)
-    const nearOffset = -(cameraZ * 0.04) % this.skylineWidth;
+    const nearOffset = mod(-distanceTravelled * 0.04, span);
     this.drawRidge(ctx, this.mountainsNear, nearOffset, horizonY, width, height, palette.mountainNear);
 
     // 4. City skyline (parallax 0.08, the closest background layer)
-    const skyOffset = -(cameraZ * 0.08) % this.skylineWidth;
+    const skyOffset = mod(-distanceTravelled * 0.08, span);
     this.drawSkyline(ctx, skyOffset, horizonY, width, height);
 
     // 5. Ground haze at the horizon, softening the seam
@@ -108,6 +125,11 @@ export class SkyRenderer {
     return blocks;
   }
 
+  /**
+   * Draw one ridge as a continuous left-to-right polyline tiled across
+   * the whole viewport. Period boundaries share the same peak value
+   * (ridge[0]), so consecutive periods join without a step.
+   */
   private drawRidge(
     ctx: CanvasRenderingContext2D,
     ridge: number[],
@@ -119,22 +141,29 @@ export class SkyRenderer {
   ): void {
     const span = this.skylineWidth;
     const baseY = horizonY + height * 0.02;
+    const peaks = ridge.length;
+
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.moveTo(0, height);
 
-    const peaks = ridge.length;
-    for (let i = 0; i <= peaks; i++) {
-      const x = ((offset + (span * i) / peaks) % span + span) % span;
-      const v = ridge[i % peaks] ?? 0;
-      const y = baseY - v * height;
-      ctx.lineTo(x, y);
+    for (let k = -1; ; k++) {
+      const periodStart = offset + k * span;
+      if (periodStart > width) break;
+      for (let i = 0; i <= peaks; i++) {
+        const x = periodStart + (span * i) / peaks;
+        if (x > width) break;
+        const v = ridge[i % peaks] ?? 0;
+        ctx.lineTo(x, baseY - v * height);
+      }
     }
+
     ctx.lineTo(width, height);
     ctx.closePath();
     ctx.fill();
   }
 
+  /** Draw the skyline blocks, tiled until the whole viewport is covered. */
   private drawSkyline(
     ctx: CanvasRenderingContext2D,
     offset: number,
@@ -142,19 +171,18 @@ export class SkyRenderer {
     width: number,
     height: number,
   ): void {
+    const span = this.skylineWidth;
     const baseY = horizonY + height * 0.01;
+    const periods = Math.ceil(width / span) + 1;
+
     ctx.fillStyle = palette.skyline;
-    for (const block of this.skyline) {
-      const x0 = ((offset + block.x * this.skylineWidth) % this.skylineWidth + this.skylineWidth) % this.skylineWidth;
-      const w = block.width * this.skylineWidth;
-      // Skip blocks fully off-screen; draw the rest, allowing slight wrap.
-      const x1 = x0 + w;
-      const visible = x1 > 0 && x0 < width;
-      if (!visible) continue;
-      const topY = baseY - block.height * height;
-      ctx.fillRect(x0, topY, w, baseY - topY);
-      if (x1 > width) {
-        ctx.fillRect(x0 - this.skylineWidth, topY, w, baseY - topY);
+    for (let k = -1; k <= periods; k++) {
+      for (const block of this.skyline) {
+        const x0 = offset + block.x * span + k * span;
+        const w = block.width * span;
+        if (x0 + w < 0 || x0 > width) continue;
+        const topY = baseY - block.height * height;
+        ctx.fillRect(x0, topY, w, baseY - topY);
       }
     }
   }

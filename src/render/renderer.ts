@@ -3,8 +3,9 @@ import {
   computeCameraDepth,
   type ProjectionParams,
 } from "./projection.ts";
-import { renderRoad } from "./road-renderer.ts";
-import { renderScenery } from "./scenery-renderer.ts";
+import { projectSegmentsAhead, type ProjectInput } from "./projected-segment.ts";
+import { createRoadClipState, renderRoadSegment } from "./road-renderer.ts";
+import { renderSceneryForSegment } from "./scenery-renderer.ts";
 import { renderVehicle } from "./vehicle-renderer.ts";
 import { SkyRenderer } from "./sky-renderer.ts";
 import { gameConfig } from "../config/game-config.ts";
@@ -19,6 +20,8 @@ export interface RenderState {
   roadOffsetRate: number;
   /** Total loop length, for wrapped Z expansion. */
   totalLength: number;
+  /** Monotonically increasing distance, drives background parallax. */
+  distanceTravelled: number;
   debug: boolean;
 }
 
@@ -26,9 +29,11 @@ export interface RenderState {
  * Main renderer — orchestrates the per-frame draw order (plan §10.3):
  * 1. Sky gradient + mountains + skyline + horizon haze
  * 2. Ground fill below the horizon
- * 3. Road segments (far to near)
- * 4. Scenery bound to segments (far to near)
- * 5. Player vehicle anchor
+ * 3. Road + scenery, one shared far → near pass: each segment draws
+ *    its road trapezoids first, then its scenery, so a near building
+ *    correctly occludes a farther road edge and the clip state (hill
+ *    crests) applies across both.
+ * 4. Player vehicle anchor
  *
  * NOTE: The DPR transform is owned exclusively by Game.render().
  * This function must NOT scale the context — doing so would compound
@@ -43,13 +48,13 @@ export function renderFrame(
 ): void {
   const { width, height } = renderCtx;
 
-  // 1. Sky, mountains, skyline, horizon haze
-  sky.render(ctx, width, height, state.cameraZ);
+  // 1. Sky, mountains, skyline, horizon haze (parallax from distance).
+  sky.render(ctx, width, height, state.distanceTravelled);
 
   // 2. Ground below the horizon
   drawGround(ctx, width, height);
 
-  // 3. Road
+  // 3. Road + scenery in one far → near pass.
   const cameraDepth = computeCameraDepth(gameConfig.cameraFovDegrees);
   const projParams: ProjectionParams = {
     cameraX: state.playerX * gameConfig.roadHalfWidth,
@@ -60,24 +65,22 @@ export function renderFrame(
     screenHeight: height,
     roadHalfWidth: gameConfig.roadHalfWidth,
   };
+  const projInput: ProjectInput = {
+    offsetRate: state.roadOffsetRate,
+    playerWorldX: state.playerX * gameConfig.roadHalfWidth,
+    totalLength: state.totalLength,
+  };
 
-  renderRoad(
-    ctx,
-    segments,
-    projParams,
-    renderCtx,
-    state.debug,
-    {
-      offsetRate: state.roadOffsetRate,
-      playerWorldX: state.playerX * gameConfig.roadHalfWidth,
-      totalLength: state.totalLength,
-    },
-  );
+  const projected = projectSegmentsAhead(segments, projParams, projInput);
+  const clip = createRoadClipState();
+  for (let i = projected.length - 1; i >= 0; i--) {
+    const ps = projected[i];
+    if (!ps) continue;
+    renderRoadSegment(ctx, ps, projParams, state.debug, clip);
+    renderSceneryForSegment(ctx, ps, projParams);
+  }
 
-  // 4. Scenery bound to the road segments
-  renderScenery(ctx, segments, projParams);
-
-  // 5. Player vehicle anchor
+  // 4. Player vehicle anchor
   renderVehicle(ctx, width, height, state.playerX);
 }
 
