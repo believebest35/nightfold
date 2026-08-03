@@ -1,5 +1,6 @@
 import type { ProjectedSegment } from "./projected-segment.ts";
 import { projectWorldPoint, type ProjectionParams } from "./projection.ts";
+import type { ScreenPoint } from "../model/types.ts";
 import { gameConfig } from "../config/game-config.ts";
 import { palette } from "../config/palette.ts";
 
@@ -155,11 +156,54 @@ export function renderRoadSegment(
   return { visible: true, clipTopY, clipBottomY };
 }
 
+/** Four guardrail ribbon corners for one side of one segment. */
+export interface GuardrailRibbonGeometry {
+  nearBottom: ScreenPoint;
+  farBottom: ScreenPoint;
+  nearTop: ScreenPoint;
+  farTop: ScreenPoint;
+}
+
 /**
- * Continuous low guardrail ribbon following the road edge, built from
- * the shared projected geometry (road center + fixed world offset).
- * Vertices are clamped to the segment's clip band; the ribbon is low
- * enough that the approximation is invisible in practice.
+ * Project the guardrail ribbon corners for one side. The near edge uses
+ * the segment's start height and the far edge its end height, so the
+ * rail follows slopes instead of floating above or digging into them.
+ * Pure and exported for tests.
+ */
+export function guardrailRibbonGeometry(
+  ps: ProjectedSegment,
+  params: ProjectionParams,
+  side: -1 | 1,
+): GuardrailRibbonGeometry {
+  const nearGroundY = ps.seg.p1.world.worldY;
+  const farGroundY = ps.seg.p2.world.worldY;
+  const zFar = ps.zBase + gameConfig.segmentLength;
+  const railX = side * RAIL_OFFSET;
+
+  const nearBottom = projectWorldPoint(
+    { worldX: ps.centerOffsetNear + railX, worldY: nearGroundY, worldZ: ps.zBase },
+    { ...params, roadHalfWidth: RAIL_HALF_WIDTH },
+  );
+  const farBottom = projectWorldPoint(
+    { worldX: ps.centerOffsetFar + railX, worldY: farGroundY, worldZ: zFar },
+    { ...params, roadHalfWidth: RAIL_HALF_WIDTH },
+  );
+  const nearTop = projectWorldPoint(
+    { worldX: ps.centerOffsetNear + railX, worldY: nearGroundY + RAIL_HEIGHT, worldZ: ps.zBase },
+    { ...params, roadHalfWidth: RAIL_HALF_WIDTH * 0.8 },
+  );
+  const farTop = projectWorldPoint(
+    { worldX: ps.centerOffsetFar + railX, worldY: farGroundY + RAIL_HEIGHT, worldZ: zFar },
+    { ...params, roadHalfWidth: RAIL_HALF_WIDTH * 0.8 },
+  );
+  return { nearBottom, farBottom, nearTop, farTop };
+}
+
+/**
+ * Continuous low guardrail ribbon following the road edge and slope,
+ * built from the shared projected geometry (road center + fixed world
+ * offset). Vertices are clamped to the segment's clip band; the ribbon
+ * is low enough that the approximation is invisible in practice.
  */
 function drawGuardrailRibbon(
   ctx: CanvasRenderingContext2D,
@@ -168,42 +212,23 @@ function drawGuardrailRibbon(
   clipTopY: number,
   clipBottomY: number,
 ): void {
-  const groundY = ps.seg.p1.world.worldY;
-  const zFar = ps.zBase + gameConfig.segmentLength;
-
   for (const side of [-1, 1] as const) {
-    const railX = side * RAIL_OFFSET;
-    const nearBottom = projectWorldPoint(
-      { worldX: ps.centerOffsetNear + railX, worldY: groundY, worldZ: ps.zBase },
-      { ...params, roadHalfWidth: RAIL_HALF_WIDTH },
-    );
-    const farBottom = projectWorldPoint(
-      { worldX: ps.centerOffsetFar + railX, worldY: groundY, worldZ: zFar },
-      { ...params, roadHalfWidth: RAIL_HALF_WIDTH },
-    );
-    const nearTop = projectWorldPoint(
-      { worldX: ps.centerOffsetNear + railX, worldY: groundY + RAIL_HEIGHT, worldZ: ps.zBase },
-      { ...params, roadHalfWidth: RAIL_HALF_WIDTH * 0.8 },
-    );
-    const farTop = projectWorldPoint(
-      { worldX: ps.centerOffsetFar + railX, worldY: groundY + RAIL_HEIGHT, worldZ: zFar },
-      { ...params, roadHalfWidth: RAIL_HALF_WIDTH * 0.8 },
-    );
+    const g = guardrailRibbonGeometry(ps, params, side);
 
     // Clamp all vertices into the segment's visible band; a degenerate
     // quad means this side's ribbon is fully occluded at this distance.
-    const y0 = Math.max(nearBottom.y, clipTopY);
-    const y1 = Math.max(farBottom.y, clipTopY);
-    const y2 = Math.min(nearTop.y, clipBottomY);
-    const y3 = Math.min(farTop.y, clipBottomY);
+    const y0 = Math.max(g.nearBottom.y, clipTopY);
+    const y1 = Math.max(g.farBottom.y, clipTopY);
+    const y2 = Math.min(g.nearTop.y, clipBottomY);
+    const y3 = Math.min(g.farTop.y, clipBottomY);
     if (Math.max(y0, y1) <= Math.min(y2, y3)) continue;
 
     ctx.fillStyle = palette.guardrail;
     ctx.beginPath();
-    ctx.moveTo(nearBottom.x - nearBottom.halfWidth, y0);
-    ctx.lineTo(farBottom.x + farBottom.halfWidth, y1);
-    ctx.lineTo(farTop.x + farTop.halfWidth, y3);
-    ctx.lineTo(nearTop.x - nearTop.halfWidth, y2);
+    ctx.moveTo(g.nearBottom.x - g.nearBottom.halfWidth, y0);
+    ctx.lineTo(g.farBottom.x + g.farBottom.halfWidth, y1);
+    ctx.lineTo(g.farTop.x + g.farTop.halfWidth, y3);
+    ctx.lineTo(g.nearTop.x - g.nearTop.halfWidth, y2);
     ctx.closePath();
     ctx.fill();
   }

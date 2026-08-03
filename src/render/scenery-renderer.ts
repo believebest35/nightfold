@@ -15,7 +15,7 @@ const HALO_MAX_Z = 9000;
 const MAX_WINDOW_WIDTH = 12;
 const MAX_WINDOW_HEIGHT = 16;
 /** Fraction of window cells that are lit (per-cell hash < this). */
-const WINDOW_LIT_RATIO = 0.25;
+export const WINDOW_LIT_RATIO = 0.25;
 
 const buildingNearRgb = parseHex(palette.buildingNear);
 const buildingFarRgb = parseHex(palette.buildingFar);
@@ -137,8 +137,6 @@ function drawWindows(
   bottomHalfWidth: number,
   screenHeight: number,
 ): void {
-  const hash = hashString(obj.id);
-
   // Grid density scales with screen size so big near buildings get more,
   // smaller windows instead of a few huge yellow rectangles.
   const columns = clamp(Math.floor((bottomHalfWidth * 2) / 28), 2, 8);
@@ -159,10 +157,9 @@ function drawWindows(
     const cy = top.y + rowT * screenHeight;
 
     for (let col = 0; col < columns; col++) {
-      // Stable per-cell value from (id, row, col): ~25% of windows are
-      // lit. Plain bit-shift patterns repeat when shifts exceed 31 bits.
-      const cellValue = ((hash * 31 + row * 7 + col * 13) >>> 0) / 0x100000000;
-      if (cellValue >= WINDOW_LIT_RATIO) continue;
+      // Stable per-cell value from (id, row, col): ~WINDOW_LIT_RATIO of
+      // cells are lit, scattered across the façade by the avalanche mix.
+      if (!windowCellLit(obj.id, row, col)) continue;
 
       const cx = rowCenterX + (col + 1 - (columns + 1) / 2) * rowStepX;
       ctx.fillRect(cx - winW / 2, cy - winH / 2, winW, winH);
@@ -205,15 +202,19 @@ function renderStreetlight(
   ctx.lineTo(top.x, top.y);
   ctx.stroke();
 
-  // Lamp head — skip if the head itself is behind the crest.
+  // Lamp head and halo share one visibility condition: screen Y grows
+  // downward, so the head is visible only when it rises above the crest
+  // clip line (top.y < clipTopY). The halo must never show through a
+  // hill when the head itself is occluded.
+  const lampVisible = lampHeadVisible(top.y, clipTopY);
   const lampSize = Math.max(base.halfWidth * 0.5, 2);
-  if (top.y >= clipTopY) {
+  if (lampVisible) {
     ctx.fillStyle = mixWithFog(parseHex(palette.headLight), t * 0.6);
     ctx.fillRect(top.x - lampSize, top.y - lampSize, lampSize * 2, lampSize);
   }
 
   // Warm halo only close to the camera, subdued so it never dominates.
-  if (relativeZ < HALO_MAX_Z && t < 0.3) {
+  if (lampHaloVisible(lampVisible, relativeZ, t)) {
     const warm = parseHex(palette.windowWarm);
     ctx.fillStyle = colorRgba(warm, 0.08);
     ctx.beginPath();
@@ -253,6 +254,47 @@ function renderGuardrail(
   const t = segmentFog(ps, params);
   ctx.fillStyle = mixWithFog(parseHex(palette.guardrail), t);
   ctx.fillRect(base.x - base.halfWidth, top.y, base.halfWidth * 2, bottomY - top.y);
+}
+
+// ---------------------------------------------------------------------------
+// Pure visibility / detail helpers, exported for tests.
+// ---------------------------------------------------------------------------
+
+/**
+ * A streetlight lamp head is visible only above the crest clip line.
+ * Screen Y grows downward, so a smaller topY means the head is higher.
+ */
+export function lampHeadVisible(topY: number, clipTopY: number): boolean {
+  return topY < clipTopY;
+}
+
+/** Halo visibility = lamp head visible, plus the distance/fog limits. */
+export function lampHaloVisible(lampVisible: boolean, relativeZ: number, fogT: number): boolean {
+  return lampVisible && relativeZ < HALO_MAX_Z && fogT < 0.3;
+}
+
+/**
+ * Stable per-window-cell value in [0, 1) derived from (id, row, col).
+ * Purely deterministic — no Math.random. Row/col are avalanche-mixed into
+ * the id hash with a 32-bit Math.imul chain so neighbouring cells scatter
+ * instead of lighting up in whole blocks (the old linear mix moved every
+ * cell by at most ~2^-32, which collapsed a whole façade into one value).
+ */
+export function windowCellValue(id: string, row: number, col: number): number {
+  let h = hashString(id);
+  h ^= Math.imul(row + 1, 0x9e3779b1);
+  h ^= Math.imul(col + 1, 0x85ebca6b);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x45d9f3b);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x45d9f3b);
+  h ^= h >>> 16;
+  return (h >>> 0) / 0x100000000;
+}
+
+/** Whether a window cell is lit; ~WINDOW_LIT_RATIO of cells light up. */
+export function windowCellLit(id: string, row: number, col: number): boolean {
+  return windowCellValue(id, row, col) < WINDOW_LIT_RATIO;
 }
 
 function clamp(value: number, min: number, max: number): number {
