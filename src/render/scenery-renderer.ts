@@ -14,25 +14,34 @@ const HALO_MAX_Z = 9000;
 /** Max window cell size on screen (px) — keeps near windows small. */
 const MAX_WINDOW_WIDTH = 12;
 const MAX_WINDOW_HEIGHT = 16;
+/** Fraction of window cells that are lit (per-cell hash < this). */
+const WINDOW_LIT_RATIO = 0.25;
 
 const buildingNearRgb = parseHex(palette.buildingNear);
 const buildingFarRgb = parseHex(palette.buildingFar);
 
 /**
- * Draw the scenery bound to one projected segment.
- *
- * The caller iterates far → near in the same pass as the road, so a
- * near building correctly occludes a farther road edge. Object world
- * positions derive from the ProjectedSegment's road center and
- * loop-expanded Z — never from raw segment data.
+ * Horizontal world offset of an object from the road center, signed by
+ * side. Pure and exported for tests.
+ */
+export function objectWorldX(centerOffset: number, obj: SceneryObject): number {
+  return centerOffset + (obj.side === "left" ? -obj.offset : obj.offset);
+}
+
+/**
+ * Draw the scenery bound to one projected segment, honoring the road
+ * segment's hill-crest clip: object bases are truncated at clipTopY so
+ * nothing ground-level shows through foreground terrain, while tall
+ * buildings may still rise above a crest.
  */
 export function renderSceneryForSegment(
   ctx: CanvasRenderingContext2D,
   ps: ProjectedSegment,
   params: ProjectionParams,
+  clipTopY: number,
 ): void {
   for (const obj of ps.seg.scenery) {
-    renderObject(ctx, obj, ps, params);
+    renderObject(ctx, obj, ps, params, clipTopY);
   }
 }
 
@@ -41,30 +50,21 @@ function renderObject(
   obj: SceneryObject,
   ps: ProjectedSegment,
   params: ProjectionParams,
+  clipTopY: number,
 ): void {
   switch (obj.kind) {
     case "building":
-      renderBuilding(ctx, obj, ps, params);
+      renderBuilding(ctx, obj, ps, params, clipTopY);
       break;
     case "streetlight":
-      renderStreetlight(ctx, obj, ps, params);
+      renderStreetlight(ctx, obj, ps, params, clipTopY);
       break;
     case "guardrail":
-      renderGuardrail(ctx, obj, ps, params);
+      renderGuardrail(ctx, obj, ps, params, clipTopY);
       break;
     default:
       break; // sign/tunnel-frame arrive with their zones in Phase 4
   }
-}
-
-/** Horizontal offset from the road center, signed by side. */
-function sideOffset(obj: SceneryObject): number {
-  return obj.side === "left" ? -obj.offset : obj.offset;
-}
-
-/** World X of the object: road center at this segment + its own offset. */
-function objectWorldX(ps: ProjectedSegment, obj: SceneryObject): number {
-  return ps.centerOffsetNear + sideOffset(obj);
 }
 
 /** Fog factor for the segment this object belongs to. */
@@ -72,13 +72,19 @@ function segmentFog(ps: ProjectedSegment, params: ProjectionParams): number {
   return fogFactor(ps.zBase - params.cameraZ);
 }
 
+/** Visible screen band for an object rooted at `baseY`, capped below by the crest. */
+function visibleBand(baseY: number, clipTopY: number): number {
+  return Math.max(baseY, clipTopY);
+}
+
 function renderBuilding(
   ctx: CanvasRenderingContext2D,
   obj: SceneryObject,
   ps: ProjectedSegment,
   params: ProjectionParams,
+  clipTopY: number,
 ): void {
-  const worldX = objectWorldX(ps, obj);
+  const worldX = objectWorldX(ps.centerOffsetNear, obj);
   const groundY = ps.seg.p1.world.worldY;
   const halfWidth = obj.width / 2;
 
@@ -92,55 +98,73 @@ function renderBuilding(
     { worldX, worldY: groundY + obj.height, worldZ: ps.zBase },
     { ...params, roadHalfWidth: halfWidth * 0.85 },
   );
-  if (top.y >= base.y) return;
+
+  // Hill crest may occlude the lower part of the building; the upper
+  // part can still be visible above the crest.
+  const bottomY = visibleBand(base.y, clipTopY);
+  if (top.y >= bottomY) return;
 
   const t = segmentFog(ps, params);
   const baseRgb = obj.colorVariant === 0 ? buildingNearRgb : buildingFarRgb;
   ctx.fillStyle = mixWithFog(baseRgb, t);
 
-  // Slightly tapering trapezoid for a hint of perspective.
+  // Interpolate the bottom edge (truncated by the crest) between the
+  // projected top and base edges.
+  const truncT = (bottomY - top.y) / (base.y - top.y);
+  const bottomHalfWidth = top.halfWidth + truncT * (base.halfWidth - top.halfWidth);
+  const bottomX = top.x + truncT * (base.x - top.x);
+
   ctx.beginPath();
-  ctx.moveTo(base.x - base.halfWidth, base.y);
-  ctx.lineTo(base.x + base.halfWidth, base.y);
+  ctx.moveTo(bottomX - bottomHalfWidth, bottomY);
+  ctx.lineTo(bottomX + bottomHalfWidth, bottomY);
   ctx.lineTo(top.x + top.halfWidth, top.y);
   ctx.lineTo(top.x - top.halfWidth, top.y);
   ctx.closePath();
   ctx.fill();
 
-  // Window lights: deterministic from the id hash, only on near buildings.
-  const screenHeight = base.y - top.y;
+  // Window lights: deterministic per-cell hash, only on near buildings.
+  const screenHeight = bottomY - top.y;
   if (screenHeight >= WINDOW_MIN_HEIGHT && t < 0.45) {
-    drawWindows(ctx, obj, base, top, screenHeight);
+    drawWindows(ctx, obj, top, bottomX, bottomHalfWidth, screenHeight);
   }
 }
 
 function drawWindows(
   ctx: CanvasRenderingContext2D,
   obj: SceneryObject,
-  base: { x: number; y: number; halfWidth: number },
   top: { x: number; y: number; halfWidth: number },
+  bottomX: number,
+  bottomHalfWidth: number,
   screenHeight: number,
 ): void {
   const hash = hashString(obj.id);
 
   // Grid density scales with screen size so big near buildings get more,
   // smaller windows instead of a few huge yellow rectangles.
-  const columns = clamp(Math.floor((base.halfWidth * 2) / 28), 2, 8);
+  const columns = clamp(Math.floor((bottomHalfWidth * 2) / 28), 2, 8);
   const rows = clamp(Math.floor(screenHeight / 34), 3, 10);
 
-  const stepX = (base.halfWidth * 2) / (columns + 1);
+  const stepX = (bottomHalfWidth * 2) / (columns + 1);
   const stepY = screenHeight / (rows + 1);
   const winW = Math.min(stepX * 0.36, MAX_WINDOW_WIDTH);
   const winH = Math.min(stepY * 0.4, MAX_WINDOW_HEIGHT);
 
   ctx.fillStyle = palette.windowWarm;
   for (let row = 0; row < rows; row++) {
+    // Row's center and half-width interpolate along the tapered façade.
+    const rowT = (row + 1) / (rows + 1);
+    const rowCenterX = top.x + (bottomX - top.x) * rowT;
+    const rowHalfWidth = top.halfWidth + (bottomHalfWidth - top.halfWidth) * rowT;
+    const rowStepX = (rowHalfWidth * 2) / (columns + 1);
+    const cy = top.y + rowT * screenHeight;
+
     for (let col = 0; col < columns; col++) {
-      // ~45% of windows are lit; layout is stable per object.
-      const bit = (hash >> (row * 5 + col)) & 1;
-      if (bit === 0) continue;
-      const cx = base.x + (col + 1 - (columns + 1) / 2) * stepX;
-      const cy = top.y + (row + 1) * stepY;
+      // Stable per-cell value from (id, row, col): ~25% of windows are
+      // lit. Plain bit-shift patterns repeat when shifts exceed 31 bits.
+      const cellValue = ((hash * 31 + row * 7 + col * 13) >>> 0) / 0x100000000;
+      if (cellValue >= WINDOW_LIT_RATIO) continue;
+
+      const cx = rowCenterX + (col + 1 - (columns + 1) / 2) * rowStepX;
       ctx.fillRect(cx - winW / 2, cy - winH / 2, winW, winH);
     }
   }
@@ -151,8 +175,9 @@ function renderStreetlight(
   obj: SceneryObject,
   ps: ProjectedSegment,
   params: ProjectionParams,
+  clipTopY: number,
 ): void {
-  const worldX = objectWorldX(ps, obj);
+  const worldX = objectWorldX(ps.centerOffsetNear, obj);
   const groundY = ps.seg.p1.world.worldY;
 
   const base = projectWorldPoint(
@@ -165,34 +190,38 @@ function renderStreetlight(
     { worldX, worldY: groundY + obj.height, worldZ: ps.zBase },
     params,
   );
-  if (top.y >= base.y) return;
+
+  const bottomY = visibleBand(base.y, clipTopY);
+  if (top.y >= bottomY) return;
 
   const relativeZ = ps.zBase - params.cameraZ;
   const t = segmentFog(ps, params);
 
-  // Pole
+  // Pole (truncated by the crest; the lamp head may still show above it)
   ctx.strokeStyle = mixWithFog(parseHex(palette.guardrail), t);
   ctx.lineWidth = Math.max(base.halfWidth * 0.12, 1.5);
   ctx.beginPath();
-  ctx.moveTo(base.x, base.y);
+  ctx.moveTo(base.x, bottomY);
   ctx.lineTo(top.x, top.y);
   ctx.stroke();
 
-  // Lamp head
+  // Lamp head — skip if the head itself is behind the crest.
   const lampSize = Math.max(base.halfWidth * 0.5, 2);
-  ctx.fillStyle = mixWithFog(parseHex(palette.headLight), t * 0.6);
-  ctx.fillRect(top.x - lampSize, top.y - lampSize, lampSize * 2, lampSize);
+  if (top.y >= clipTopY) {
+    ctx.fillStyle = mixWithFog(parseHex(palette.headLight), t * 0.6);
+    ctx.fillRect(top.x - lampSize, top.y - lampSize, lampSize * 2, lampSize);
+  }
 
-  // Warm halo only close to the camera
+  // Warm halo only close to the camera, subdued so it never dominates.
   if (relativeZ < HALO_MAX_Z && t < 0.3) {
     const warm = parseHex(palette.windowWarm);
-    ctx.fillStyle = colorRgba(warm, 0.1);
+    ctx.fillStyle = colorRgba(warm, 0.08);
     ctx.beginPath();
-    ctx.arc(top.x, top.y, lampSize * 8, 0, Math.PI * 2);
+    ctx.arc(top.x, top.y, lampSize * 6, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = colorRgba(warm, 0.25);
+    ctx.fillStyle = colorRgba(warm, 0.18);
     ctx.beginPath();
-    ctx.arc(top.x, top.y, lampSize * 3.5, 0, Math.PI * 2);
+    ctx.arc(top.x, top.y, lampSize * 2.8, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -202,8 +231,9 @@ function renderGuardrail(
   obj: SceneryObject,
   ps: ProjectedSegment,
   params: ProjectionParams,
+  clipTopY: number,
 ): void {
-  const worldX = objectWorldX(ps, obj);
+  const worldX = objectWorldX(ps.centerOffsetNear, obj);
   const groundY = ps.seg.p1.world.worldY;
 
   const base = projectWorldPoint(
@@ -216,11 +246,13 @@ function renderGuardrail(
     { worldX, worldY: groundY + obj.height, worldZ: ps.zBase },
     params,
   );
-  if (top.y >= base.y) return;
+
+  const bottomY = visibleBand(base.y, clipTopY);
+  if (top.y >= bottomY) return;
 
   const t = segmentFog(ps, params);
   ctx.fillStyle = mixWithFog(parseHex(palette.guardrail), t);
-  ctx.fillRect(base.x - base.halfWidth, top.y, base.halfWidth * 2, base.y - top.y);
+  ctx.fillRect(base.x - base.halfWidth, top.y, base.halfWidth * 2, bottomY - top.y);
 }
 
 function clamp(value: number, min: number, max: number): number {

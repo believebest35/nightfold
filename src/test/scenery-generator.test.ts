@@ -51,12 +51,16 @@ describe("attachScenery", () => {
     }
   });
 
-  it("places guardrails on both sides of every segment", () => {
+  it("places guardrail support posts on both sides every 4 segments", () => {
     const segments = roadWithScenery(42);
     for (const seg of segments) {
       const rails = seg.scenery.filter((o) => o.kind === "guardrail");
-      expect(rails.filter((r) => r.side === "left").length).toBe(1);
-      expect(rails.filter((r) => r.side === "right").length).toBe(1);
+      if (seg.index % 4 === 0) {
+        expect(rails.filter((r) => r.side === "left").length).toBe(1);
+        expect(rails.filter((r) => r.side === "right").length).toBe(1);
+      } else {
+        expect(rails.length).toBe(0);
+      }
     }
   });
 
@@ -67,6 +71,21 @@ describe("attachScenery", () => {
       expect(seg.zone).toBe("city"); // default recipe is all city
       expect(buildings.length).toBeLessThanOrEqual(1);
     }
+  });
+
+  it("keeps building density balanced across sides", () => {
+    const segments = roadWithScenery(42);
+    let left = 0;
+    let right = 0;
+    for (const seg of segments) {
+      for (const o of seg.scenery) {
+        if (o.kind !== "building") continue;
+        if (o.side === "left") left++;
+        else right++;
+      }
+    }
+    expect(left + right).toBeGreaterThan(50);
+    expect(Math.abs(left - right) / (left + right)).toBeLessThan(0.35);
   });
 
   it("generates at least 3 building height variants", () => {

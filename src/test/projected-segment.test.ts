@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { projectSegmentsAhead, type ProjectInput } from "../render/projected-segment.ts";
 import type { ProjectionParams } from "../render/projection.ts";
+import { objectWorldX } from "../render/scenery-renderer.ts";
 import { buildDefaultRoad, generateStraightRoad } from "../world/road-generator.ts";
 import { getSegmentsAhead } from "../world/road-query.ts";
 import { attachScenery } from "../world/scenery-generator.ts";
 import { gameConfig } from "../config/game-config.ts";
+import type { SceneryObject } from "../model/types.ts";
 
 function makeParams(overrides: Partial<ProjectionParams> = {}): ProjectionParams {
   return {
@@ -109,27 +111,49 @@ describe("projectSegmentsAhead — curve accumulation", () => {
 });
 
 describe("projectSegmentsAhead — shared scenery reference", () => {
-  it("places scenery objects on the road center of their segment", () => {
+  it("places scenery at road center + signed offset (pure function)", () => {
+    const base: SceneryObject = {
+      id: "s5-building-left",
+      kind: "building",
+      segmentIndex: 5,
+      side: "left",
+      offset: 2500,
+      width: 1000,
+      height: 3000,
+      colorVariant: 0,
+    };
+    const leftObj: SceneryObject = { ...base };
+    const rightObj: SceneryObject = { ...base, side: "right" };
+
+    // Scenery world X = the segment's accumulated road center + the
+    // object's signed lateral offset.
+    expect(objectWorldX(120, leftObj)).toBe(120 - 2500);
+    expect(objectWorldX(120, rightObj)).toBe(120 + 2500);
+  });
+
+  it("uses the loop-expanded zBase for scenery after wrapping", () => {
     const road = buildDefaultRoad();
     attachScenery(road.segments, 42);
+    const cameraZ = road.totalLength - 100; // near loop end
+    const segments = getSegmentsAhead(road.segments, road.totalLength, cameraZ, 30);
     const projected = projectSegmentsAhead(
-      road.segments.slice(0, 150),
-      makeParams({ cameraZ: 0 }),
+      segments,
+      makeParams({ cameraZ }),
       makeInput({ totalLength: road.totalLength }),
     );
 
-    for (const ps of projected) {
-      // The scenery renderer derives object world X from this segment's
-      // accumulated center offset; it must be a finite number for every
-      // segment that carries scenery.
-      if (ps.seg.scenery.length > 0) {
-        expect(Number.isFinite(ps.centerOffsetNear)).toBe(true);
-        expect(Number.isFinite(ps.centerOffsetFar)).toBe(true);
-      }
-    }
+    // At least one wrapped segment carries scenery; its expanded Z is
+    // what the scenery renderer uses, never the raw (behind-camera) Z.
+    const wrappedWithScenery = projected.find(
+      (ps) => ps.seg.scenery.length > 0 && ps.seg.p1.world.worldZ < cameraZ,
+    );
+    if (!wrappedWithScenery) throw new Error("expected a wrapped scenery segment");
+    expect(wrappedWithScenery.zBase).toBe(
+      wrappedWithScenery.seg.p1.world.worldZ + road.totalLength,
+    );
   });
 
-  it("keeps every segment's expanded Z consistent for road and scenery", () => {
+  it("keeps every projected segment ahead of the camera", () => {
     const road = buildDefaultRoad();
     attachScenery(road.segments, 42);
     const cameraZ = road.totalLength - 4000;
@@ -138,11 +162,7 @@ describe("projectSegmentsAhead — shared scenery reference", () => {
       makeParams({ cameraZ }),
       makeInput({ totalLength: road.totalLength }),
     );
-    // Segments whose scenery must exist: all returned segments carry
-    // their scenery, and every one has a valid expanded Z ahead of camera.
-    const withScenery = projected.filter((ps) => ps.seg.scenery.length > 0);
-    expect(withScenery.length).toBeGreaterThan(0);
-    for (const ps of withScenery) {
+    for (const ps of projected) {
       expect(ps.zBase - cameraZ).toBeGreaterThanOrEqual(0);
     }
   });

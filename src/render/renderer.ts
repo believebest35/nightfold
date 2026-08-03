@@ -76,8 +76,13 @@ export function renderFrame(
   for (let i = projected.length - 1; i >= 0; i--) {
     const ps = projected[i];
     if (!ps) continue;
-    renderRoadSegment(ctx, ps, projParams, state.debug, clip);
-    renderSceneryForSegment(ctx, ps, projParams);
+    // The road pass reports the segment's visibility and clip band;
+    // scenery only draws for visible segments and truncates object
+    // bases at the hill crest (no ground-level objects through terrain).
+    const vis = renderRoadSegment(ctx, ps, projParams, state.debug, clip);
+    if (vis.visible) {
+      renderSceneryForSegment(ctx, ps, projParams, vis.clipTopY);
+    }
   }
 
   // 4. Player vehicle anchor
