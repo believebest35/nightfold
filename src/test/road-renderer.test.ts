@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { guardrailRibbonGeometry } from "../render/road-renderer.ts";
+import { guardrailRibbonFace, guardrailRibbonGeometry } from "../render/road-renderer.ts";
 import { projectWorldPoint, type ProjectionParams } from "../render/projection.ts";
 import type { ProjectedSegment } from "../render/projected-segment.ts";
 import type { RoadSegment } from "../model/types.ts";
@@ -75,5 +75,46 @@ describe("guardrailRibbonGeometry", () => {
     // The near edge stays anchored to the start height in all cases.
     expect(uphill.nearBottom.y).toBe(flat.nearBottom.y);
     expect(downhill.nearBottom.y).toBe(flat.nearBottom.y);
+  });
+});
+
+describe("guardrailRibbonFace", () => {
+  it("uses the same road-facing edge at the near and far ends", () => {
+    const params = makeParams();
+    const geometry = guardrailRibbonGeometry(makeProjectedSegment(0, 0), params, 1);
+    const face = guardrailRibbonFace(geometry, 1, 0, params.screenHeight);
+
+    expect(face).not.toBeNull();
+    expect(face?.nearBottom.x).toBe(geometry.nearBottom.x - geometry.nearBottom.halfWidth);
+    expect(face?.farBottom.x).toBe(geometry.farBottom.x - geometry.farBottom.halfWidth);
+    expect(face?.nearTop.x).toBe(geometry.nearTop.x - geometry.nearTop.halfWidth);
+    expect(face?.farTop.x).toBe(geometry.farTop.x - geometry.farTop.halfWidth);
+  });
+
+  it("mirrors the road-facing edge for the left and right rails", () => {
+    const params = makeParams();
+    const ps = makeProjectedSegment(0, 0);
+    const leftGeometry = guardrailRibbonGeometry(ps, params, -1);
+    const rightGeometry = guardrailRibbonGeometry(ps, params, 1);
+    const left = guardrailRibbonFace(leftGeometry, -1, 0, params.screenHeight);
+    const right = guardrailRibbonFace(rightGeometry, 1, 0, params.screenHeight);
+
+    expect(left).not.toBeNull();
+    expect(right).not.toBeNull();
+    expect((left?.nearBottom.x ?? 0) + (right?.nearBottom.x ?? 0)).toBeCloseTo(params.screenWidth);
+    expect((left?.farBottom.x ?? 0) + (right?.farBottom.x ?? 0)).toBeCloseTo(params.screenWidth);
+  });
+
+  it("keeps slope-aware Y projections while clipping the far bottom to the crest", () => {
+    const params = makeParams();
+    const geometry = guardrailRibbonGeometry(makeProjectedSegment(0, 400), params, -1);
+    const clipTopY = geometry.farBottom.y + 5;
+    const clipBottomY = geometry.nearBottom.y - 5;
+    const face = guardrailRibbonFace(geometry, -1, clipTopY, clipBottomY);
+
+    expect(face).not.toBeNull();
+    expect(face?.farBottom.y).toBe(clipTopY);
+    expect(face?.nearBottom.y).toBe(geometry.nearBottom.y);
+    expect(face?.farTop.y).toBe(geometry.farTop.y);
   });
 });

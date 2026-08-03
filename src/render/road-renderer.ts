@@ -89,7 +89,16 @@ export function renderRoadSegment(
 
   // 2. Road surface (alternating colors)
   const roadColor = ps.seg.colorVariant === 0 ? palette.road : palette.roadAlt;
-  drawTrapezoid(ctx, centerXTop, centerXBottom, halfWidthTop, halfWidthBottom, clipTopY, clipBottomY, roadColor);
+  drawTrapezoid(
+    ctx,
+    centerXTop,
+    centerXBottom,
+    halfWidthTop,
+    halfWidthBottom,
+    clipTopY,
+    clipBottomY,
+    roadColor,
+  );
 
   // 3. Guardrail ribbon along both road edges, just outside the shoulder.
   drawGuardrailRibbon(ctx, ps, params, clipTopY, clipBottomY);
@@ -164,6 +173,19 @@ export interface GuardrailRibbonGeometry {
   farTop: ScreenPoint;
 }
 
+interface RibbonVertex {
+  x: number;
+  y: number;
+}
+
+/** The visible inner face of a guardrail ribbon. */
+export interface GuardrailRibbonFace {
+  nearBottom: RibbonVertex;
+  farBottom: RibbonVertex;
+  farTop: RibbonVertex;
+  nearTop: RibbonVertex;
+}
+
 /**
  * Project the guardrail ribbon corners for one side. The near edge uses
  * the segment's start height and the far edge its end height, so the
@@ -200,6 +222,33 @@ export function guardrailRibbonGeometry(
 }
 
 /**
+ * Build the visible ribbon face without twisting it across its width.
+ * The left rail uses its right (road-facing) edge and the right rail its
+ * left edge; near and far vertices therefore keep the same lateral side.
+ * Pure and exported so tests cover the exact vertices used for drawing.
+ */
+export function guardrailRibbonFace(
+  geometry: GuardrailRibbonGeometry,
+  side: -1 | 1,
+  clipTopY: number,
+  clipBottomY: number,
+): GuardrailRibbonFace | null {
+  const nearBottomY = Math.max(geometry.nearBottom.y, clipTopY);
+  const farBottomY = Math.max(geometry.farBottom.y, clipTopY);
+  const nearTopY = Math.min(geometry.nearTop.y, clipBottomY);
+  const farTopY = Math.min(geometry.farTop.y, clipBottomY);
+  if (Math.max(nearBottomY, farBottomY) <= Math.min(nearTopY, farTopY)) return null;
+
+  const innerEdgeX = (point: ScreenPoint): number => point.x - side * point.halfWidth;
+  return {
+    nearBottom: { x: innerEdgeX(geometry.nearBottom), y: nearBottomY },
+    farBottom: { x: innerEdgeX(geometry.farBottom), y: farBottomY },
+    farTop: { x: innerEdgeX(geometry.farTop), y: farTopY },
+    nearTop: { x: innerEdgeX(geometry.nearTop), y: nearTopY },
+  };
+}
+
+/**
  * Continuous low guardrail ribbon following the road edge and slope,
  * built from the shared projected geometry (road center + fixed world
  * offset). Vertices are clamped to the segment's clip band; the ribbon
@@ -214,21 +263,15 @@ function drawGuardrailRibbon(
 ): void {
   for (const side of [-1, 1] as const) {
     const g = guardrailRibbonGeometry(ps, params, side);
-
-    // Clamp all vertices into the segment's visible band; a degenerate
-    // quad means this side's ribbon is fully occluded at this distance.
-    const y0 = Math.max(g.nearBottom.y, clipTopY);
-    const y1 = Math.max(g.farBottom.y, clipTopY);
-    const y2 = Math.min(g.nearTop.y, clipBottomY);
-    const y3 = Math.min(g.farTop.y, clipBottomY);
-    if (Math.max(y0, y1) <= Math.min(y2, y3)) continue;
+    const face = guardrailRibbonFace(g, side, clipTopY, clipBottomY);
+    if (!face) continue;
 
     ctx.fillStyle = palette.guardrail;
     ctx.beginPath();
-    ctx.moveTo(g.nearBottom.x - g.nearBottom.halfWidth, y0);
-    ctx.lineTo(g.farBottom.x + g.farBottom.halfWidth, y1);
-    ctx.lineTo(g.farTop.x + g.farTop.halfWidth, y3);
-    ctx.lineTo(g.nearTop.x - g.nearTop.halfWidth, y2);
+    ctx.moveTo(face.nearBottom.x, face.nearBottom.y);
+    ctx.lineTo(face.farBottom.x, face.farBottom.y);
+    ctx.lineTo(face.farTop.x, face.farTop.y);
+    ctx.lineTo(face.nearTop.x, face.nearTop.y);
     ctx.closePath();
     ctx.fill();
   }
