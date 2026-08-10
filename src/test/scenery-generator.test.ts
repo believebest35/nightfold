@@ -68,7 +68,9 @@ describe("attachScenery", () => {
     const segments = roadWithScenery(42);
     for (const seg of segments) {
       const buildings = seg.scenery.filter((o) => o.kind === "building");
-      expect(seg.zone).toBe("city"); // default recipe is all city
+      if (buildings.length > 0) {
+        expect(seg.zone).toBe("city");
+      }
       expect(buildings.length).toBeLessThanOrEqual(1);
     }
   });
@@ -84,7 +86,9 @@ describe("attachScenery", () => {
         else right++;
       }
     }
-    expect(left + right).toBeGreaterThan(50);
+    // The recipe now has two city blocks (~80 segments); ~0.55 chance
+    // per attempted segment leaves a healthy sample without being huge.
+    expect(left + right).toBeGreaterThan(20);
     expect(Math.abs(left - right) / (left + right)).toBeLessThan(0.35);
   });
 

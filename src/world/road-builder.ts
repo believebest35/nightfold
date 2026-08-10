@@ -1,4 +1,4 @@
-import type { RoadSegment, RoadPoint, SceneryObject } from "../model/types.ts";
+import type { RoadSegment, RoadPoint, SceneryObject, RoadZone } from "../model/types.ts";
 import { gameConfig } from "../config/game-config.ts";
 
 /**
@@ -28,6 +28,18 @@ export class RoadBuilder {
   private segments: RoadSegment[] = [];
   private currentZ = 0;
   private currentY = 0;
+  private currentZone: RoadZone = "city";
+
+  /**
+   * Switch the zone (plan §12) for all subsequently appended segments.
+   * Zones switch instantly at the segment boundary; visual continuity
+   * across the seam is the scenery generator's job (fade fields, shared
+   * cadences), not the builder's.
+   */
+  addZone(zone: RoadZone): this {
+    this.currentZone = zone;
+    return this;
+  }
 
   /** `length` straight flat segments. */
   addStraight(length: number): this {
@@ -107,7 +119,7 @@ export class RoadBuilder {
       p1,
       p2,
       curve,
-      zone: "city",
+      zone: this.currentZone,
       colorVariant: (index % 2) as 0 | 1,
       scenery: [] as SceneryObject[],
     });

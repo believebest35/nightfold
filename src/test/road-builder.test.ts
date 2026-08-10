@@ -95,6 +95,57 @@ describe("RoadBuilder.addSCurves", () => {
   });
 });
 
+describe("RoadBuilder.addZone", () => {
+  it("defaults to city before any addZone call", () => {
+    const road = new RoadBuilder().addStraight(3).build();
+    for (const seg of road.segments) {
+      expect(seg.zone).toBe("city");
+    }
+  });
+
+  it("switches the zone for all subsequently appended segments", () => {
+    const road = new RoadBuilder()
+      .addStraight(2)
+      .addZone("elevated")
+      .addStraight(3)
+      .addZone("tunnel")
+      .addStraight(2)
+      .build();
+    expect(road.segments.map((s) => s.zone)).toEqual([
+      "city", "city",
+      "elevated", "elevated", "elevated",
+      "tunnel", "tunnel",
+    ]);
+  });
+
+  it("can switch back to a previous zone", () => {
+    const road = new RoadBuilder()
+      .addStraight(2)
+      .addZone("riverside")
+      .addStraight(2)
+      .addZone("city")
+      .addStraight(2)
+      .build();
+    expect(road.segments.map((s) => s.zone)).toEqual([
+      "city", "city", "riverside", "riverside", "city", "city",
+    ]);
+  });
+
+  it("does not disturb geometry (zone is orthogonal to curve/height)", () => {
+    const withZone = new RoadBuilder()
+      .addZone("tunnel")
+      .addHill(4, 4, 4, -800)
+      .build();
+    const plain = new RoadBuilder().addHill(4, 4, 4, -800).build();
+    expect(withZone.segments.map((s) => s.curve)).toEqual(
+      plain.segments.map((s) => s.curve),
+    );
+    expect(withZone.segments.map((s) => s.p2.world.worldY)).toEqual(
+      plain.segments.map((s) => s.p2.world.worldY),
+    );
+  });
+});
+
 describe("RoadBuilder segment structure", () => {
   it("has consecutive indices and continuous Z", () => {
     const road = new RoadBuilder()
@@ -177,5 +228,34 @@ describe("buildDefaultRoad", () => {
     const curves = road.segments.map((s) => s.curve);
     expect(curves.some((c) => c > 0.2)).toBe(true);
     expect(curves.some((c) => c < -0.2)).toBe(true);
+  });
+
+  it("visits the four zones in recipe order (city → elevated → tunnel → riverside → city)", () => {
+    const zones = road.segments.map((s) => s.zone);
+    // First-occurrence order: the recipe lays out each zone as one block,
+    // with a final city block closing the loop.
+    expect([...new Set(zones)]).toEqual(["city", "elevated", "tunnel", "riverside"]);
+    expect(zones[zones.length - 1]).toBe("city");
+    // The city bookends: first block opens the loop, last block closes it.
+    const lastCity = zones.lastIndexOf("city");
+    expect(lastCity).toBe(zones.length - 1);
+  });
+
+  it("gives every zone a long enough block to be recognizable (≥ 20 segments)", () => {
+    const zones = road.segments.map((s) => s.zone);
+    for (const zone of ["city", "elevated", "tunnel", "riverside"] as const) {
+      const count = zones.filter((z) => z === zone).length;
+      expect(count).toBeGreaterThanOrEqual(20);
+    }
+  });
+
+  it("keeps the tunnel over the downhill valley bottom", () => {
+    const tunnelSegs = road.segments.filter((s) => s.zone === "tunnel");
+    expect(tunnelSegs.length).toBeGreaterThan(0);
+    // The tunnel block sits in the -800 dip: its mid segment must be well
+    // below the start/end height of the loop.
+    const mid = tunnelSegs[Math.floor(tunnelSegs.length / 2)];
+    if (!mid) throw new Error("missing tunnel segment");
+    expect(mid.p1.world.worldY).toBeLessThan(-400);
   });
 });
