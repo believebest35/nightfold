@@ -11,6 +11,12 @@ const MIN_SCREEN_HALF_WIDTH = 2;
 const WINDOW_MIN_HEIGHT = 90;
 /** Only draw streetlight halos within this world distance. */
 const HALO_MAX_Z = 9000;
+/** Tunnel frame every N segments; all tunnel segments carry the mask. */
+const TUNNEL_FRAME_INTERVAL = 6;
+/** Fade the tunnel mask over this many segments at both seams. */
+const TUNNEL_FADE_SEGMENTS = 12;
+/** Mask alpha at full tunnel depth (never fully black — road stays readable). */
+const TUNNEL_MASK_ALPHA = 0.92;
 /** Max window cell size on screen (px) — keeps near windows small. */
 const MAX_WINDOW_WIDTH = 12;
 const MAX_WINDOW_HEIGHT = 16;
@@ -62,8 +68,11 @@ function renderObject(
     case "guardrail":
       renderGuardrail(ctx, obj, ps, params, clipTopY);
       break;
+    case "tunnel-frame":
+      renderTunnelFrame(ctx, obj, ps, params, clipTopY);
+      break;
     default:
-      break; // sign/tunnel-frame arrive with their zones in Phase 4
+      break; // sign arrives with its zone later
   }
 }
 
@@ -256,6 +265,71 @@ function renderGuardrail(
   ctx.fillRect(base.x - base.halfWidth, top.y, base.halfWidth * 2, bottomY - top.y);
 }
 
+/**
+ * Tunnel wall/ceiling mask plus structural frames (plan §12.3).
+ *
+ * Every tunnel segment darkens the screen above and beside its road band
+ * so no sky or skyline shows through the tunnel; the strength ramps from
+ * the entrance and mirrors at the exit, which is what makes entering and
+ * leaving a tunnel a fade instead of a snap. Every TUNNEL_FRAME_INTERVAL
+ * segments additionally draws a crossbeam with a warm lamp at the far
+ * edge — the lights that rush past the driver.
+ *
+ * The wall polygon approximates the road's clip-band edge with the raw
+ * near/far projections; at hill crests the tiny seam is hidden by the
+ * mask itself.
+ */
+function renderTunnelFrame(
+  ctx: CanvasRenderingContext2D,
+  obj: SceneryObject,
+  ps: ProjectedSegment,
+  params: ProjectionParams,
+  clipTopY: number,
+): void {
+  const fade = tunnelFade(obj);
+  if (fade <= 0) return;
+
+  const clipBottomY = Math.min(ps.near.y, params.screenHeight);
+  const maskColor = colorRgba(parseHex(palette.tunnelInterior), fade * TUNNEL_MASK_ALPHA);
+
+  // Ceiling mask: everything above the road's top edge.
+  ctx.fillStyle = maskColor;
+  ctx.fillRect(0, 0, params.screenWidth, clipTopY);
+
+  // Side walls: from the road edges out to the screen sides, bounded by
+  // the segment's clip band.
+  ctx.fillStyle = maskColor;
+  ctx.beginPath();
+  ctx.moveTo(0, clipTopY);
+  ctx.lineTo(ps.far.x - ps.far.halfWidth, clipTopY);
+  ctx.lineTo(ps.near.x - ps.near.halfWidth, clipBottomY);
+  ctx.lineTo(0, clipBottomY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(params.screenWidth, clipTopY);
+  ctx.lineTo(ps.far.x + ps.far.halfWidth, clipTopY);
+  ctx.lineTo(ps.near.x + ps.near.halfWidth, clipBottomY);
+  ctx.lineTo(params.screenWidth, clipBottomY);
+  ctx.closePath();
+  ctx.fill();
+
+  if (obj.segmentIndex % TUNNEL_FRAME_INTERVAL !== 0) return;
+
+  // Crossbeam at the far edge of the segment.
+  ctx.strokeStyle = mixWithFog(parseHex(palette.tunnelFrame), segmentFog(ps, params));
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(ps.far.x - ps.far.halfWidth, clipTopY);
+  ctx.lineTo(ps.far.x + ps.far.halfWidth, clipTopY);
+  ctx.stroke();
+
+  // Warm lamp at the crossbeam center.
+  ctx.fillStyle = colorRgba(parseHex(palette.windowWarm), fade * 0.9);
+  const lampW = Math.max(ps.far.halfWidth * 0.16, 2);
+  ctx.fillRect(ps.far.x - lampW / 2, clipTopY - 3, lampW, 3);
+}
+
 // ---------------------------------------------------------------------------
 // Pure visibility / detail helpers, exported for tests.
 // ---------------------------------------------------------------------------
@@ -295,6 +369,19 @@ export function windowCellValue(id: string, row: number, col: number): number {
 /** Whether a window cell is lit; ~WINDOW_LIT_RATIO of cells light up. */
 export function windowCellLit(id: string, row: number, col: number): boolean {
   return windowCellValue(id, row, col) < WINDOW_LIT_RATIO;
+}
+
+/**
+ * Tunnel darkness factor in [0, 1] for a tunnel-frame object: 0 right at
+ * the entrance, ramping to 1 past TUNNEL_FADE_SEGMENTS, and mirrored at
+ * the exit — so both seams fade instead of snapping. Pure, exported for
+ * tests.
+ */
+export function tunnelFade(obj: SceneryObject): number {
+  const entry = obj.entryDist ?? 0;
+  const exit = obj.exitDist ?? 0;
+  const f = Math.min(entry / TUNNEL_FADE_SEGMENTS, exit / TUNNEL_FADE_SEGMENTS, 1);
+  return Math.max(f, 0);
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -4,8 +4,25 @@ import {
   lampHaloVisible,
   windowCellValue,
   windowCellLit,
+  tunnelFade,
   WINDOW_LIT_RATIO,
 } from "../render/scenery-renderer.ts";
+import type { SceneryObject } from "../model/types.ts";
+
+function tunnelFrame(entryDist: number, exitDist: number): SceneryObject {
+  return {
+    id: "s100-tunnel-frame",
+    kind: "tunnel-frame",
+    segmentIndex: 100,
+    side: "left",
+    offset: 1500,
+    width: 400,
+    height: 2600,
+    colorVariant: 0,
+    entryDist,
+    exitDist,
+  };
+}
 
 describe("lampHeadVisible", () => {
   it("shows the head when it rises above the crest clip line", () => {
@@ -102,5 +119,41 @@ describe("windowCellValue", () => {
     // 16000 cells: sd ≈ 0.0034, so 0.2–0.3 is a safe statistical bound.
     expect(ratio).toBeGreaterThan(0.2);
     expect(ratio).toBeLessThan(0.3);
+  });
+});
+
+describe("tunnelFade", () => {
+  it("is fully light at the entrance and exit seams", () => {
+    expect(tunnelFade(tunnelFrame(0, 30))).toBe(0);
+    expect(tunnelFade(tunnelFrame(30, 0))).toBe(0);
+  });
+
+  it("ramps toward full darkness past the fade distance", () => {
+    expect(tunnelFade(tunnelFrame(6, 30))).toBeCloseTo(0.5);
+    expect(tunnelFade(tunnelFrame(12, 30))).toBe(1);
+    expect(tunnelFade(tunnelFrame(30, 12))).toBe(1);
+    // Interior segments sit at full darkness.
+    expect(tunnelFade(tunnelFrame(30, 30))).toBe(1);
+  });
+
+  it("uses whichever seam is closer", () => {
+    const nearEntry = tunnelFade(tunnelFrame(3, 40));
+    const nearExit = tunnelFade(tunnelFrame(40, 3));
+    expect(nearEntry).toBeCloseTo(0.25);
+    expect(nearExit).toBeCloseTo(0.25);
+  });
+
+  it("degrades gracefully when fade fields are missing", () => {
+    const bare: SceneryObject = {
+      id: "s1-tunnel-frame",
+      kind: "tunnel-frame",
+      segmentIndex: 1,
+      side: "left",
+      offset: 1500,
+      width: 400,
+      height: 2600,
+      colorVariant: 0,
+    };
+    expect(tunnelFade(bare)).toBe(0);
   });
 });

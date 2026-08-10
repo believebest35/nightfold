@@ -101,7 +101,10 @@ export function renderRoadSegment(
   );
 
   // 3. Guardrail ribbon along both road edges, just outside the shoulder.
-  drawGuardrailRibbon(ctx, ps, params, clipTopY, clipBottomY);
+  // Tunnel walls replace the rails inside tunnels (plan §12.3).
+  if (ps.seg.zone !== "tunnel") {
+    drawGuardrailRibbon(ctx, ps, params, clipTopY, clipBottomY);
+  }
 
   // 4. Line details only on near segments — far away they would
   // render as constant-width bright specks (plan §12.5: far = fewer details).

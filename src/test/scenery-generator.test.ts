@@ -39,11 +39,14 @@ describe("attachScenery", () => {
     }
   });
 
-  it("places streetlights every 6 segments", () => {
+  it("places streetlights every 6 segments outside tunnels", () => {
     const segments = roadWithScenery(42);
     for (const seg of segments) {
       const lights = seg.scenery.filter((o) => o.kind === "streetlight");
-      if (seg.index % 6 === 0) {
+      if (seg.zone === "tunnel") {
+        // Tunnel frames carry the warm lights instead.
+        expect(lights.length).toBe(0);
+      } else if (seg.index % 6 === 0) {
         expect(lights.length).toBe(1);
       } else {
         expect(lights.length).toBe(0);
@@ -54,8 +57,13 @@ describe("attachScenery", () => {
   it("places guardrail support posts on both sides on the zone's cadence", () => {
     const segments = roadWithScenery(42);
     for (const seg of segments) {
-      const interval = seg.zone === "elevated" ? 8 : 4;
       const rails = seg.scenery.filter((o) => o.kind === "guardrail");
+      if (seg.zone === "tunnel") {
+        // Tunnel walls replace the rails.
+        expect(rails.length).toBe(0);
+        continue;
+      }
+      const interval = seg.zone === "elevated" ? 8 : 4;
       if (seg.index % interval === 0) {
         expect(rails.filter((r) => r.side === "left").length).toBe(1);
         expect(rails.filter((r) => r.side === "right").length).toBe(1);
@@ -176,5 +184,47 @@ describe("attachScenery", () => {
         ids.add(o.id);
       }
     }
+  });
+
+  it("gives every tunnel segment exactly one tunnel-frame mask", () => {
+    const segments = roadWithScenery(42);
+    let tunnelSegs = 0;
+    for (const seg of segments) {
+      const frames = seg.scenery.filter((o) => o.kind === "tunnel-frame");
+      if (seg.zone === "tunnel") {
+        tunnelSegs++;
+        expect(frames.length).toBe(1);
+      } else {
+        expect(frames.length).toBe(0);
+      }
+    }
+    expect(tunnelSegs).toBeGreaterThan(0);
+  });
+
+  it("ramps tunnel entryDist/exitDist from the run boundaries", () => {
+    const segments = roadWithScenery(42);
+    const tunnelSegs = segments.filter((s) => s.zone === "tunnel");
+    const runStart = tunnelSegs[0]?.index ?? 0;
+    const runEnd = tunnelSegs[tunnelSegs.length - 1]?.index ?? 0;
+
+    for (const seg of tunnelSegs) {
+      const frame = seg.scenery.find((o) => o.kind === "tunnel-frame");
+      if (!frame) throw new Error("missing tunnel-frame");
+      expect(frame.entryDist).toBe(seg.index - runStart);
+      expect(frame.exitDist).toBe(runEnd - seg.index);
+    }
+    // Both seams start at 0 (full light at the mouth) and the interior
+    // sits comfortably past the fade distance.
+    expect(tunnelSegs[0]?.scenery.find((o) => o.kind === "tunnel-frame")?.entryDist).toBe(0);
+    expect(
+      tunnelSegs[tunnelSegs.length - 1]?.scenery.find((o) => o.kind === "tunnel-frame")?.exitDist,
+    ).toBe(0);
+    const mid = tunnelSegs[Math.floor(tunnelSegs.length / 2)];
+    const midFrame = mid?.scenery.find((o) => o.kind === "tunnel-frame");
+    if (!midFrame) throw new Error("missing mid tunnel-frame");
+    expect((midFrame.entryDist ?? 0) + (midFrame.exitDist ?? 0)).toBe(
+      runEnd - runStart,
+    );
+    expect(midFrame.entryDist ?? 0).toBeGreaterThanOrEqual(20);
   });
 });

@@ -40,6 +40,13 @@ export interface SceneryObject {
   width: number;
   height: number;
   colorVariant: number;
+  /**
+   * For zone-spanning kinds (tunnel-frame, river): distance in segments
+   * from the zone entrance, and from this segment to the zone exit.
+   * Renders fade in/out across the seams so zone transitions never pop.
+   */
+  entryDist?: number;
+  exitDist?: number;
 }
 
 export interface InputState {

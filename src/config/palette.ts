@@ -11,6 +11,8 @@ export const palette = {
   roadAlt: "#242b3a",
   lane: "#d8d2b8",
   guardrail: "#596273",
+  tunnelInterior: "#080b14",
+  tunnelFrame: "#1b2233",
   buildingNear: "#111521",
   buildingFar: "#161b2b",
   windowWarm: "#f0b85a",

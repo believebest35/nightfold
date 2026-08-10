@@ -31,22 +31,35 @@ function guardrailInterval(zone: RoadZone): number {
  */
 export function attachScenery(segments: RoadSegment[], seed: number): void {
   const rng = new SeededRandom(seed);
+  const tunnelRuns = findZoneRuns(segments, "tunnel");
 
   for (const seg of segments) {
     const objects: SceneryObject[] = [];
 
-    // Guardrail support posts: every guardrailInterval segments, both sides.
-    if (seg.index % guardrailInterval(seg.zone) === 0) {
+    // Guardrail support posts: every guardrailInterval segments, both
+    // sides. Tunnel walls replace the rails inside tunnels.
+    if (seg.zone !== "tunnel" && seg.index % guardrailInterval(seg.zone) === 0) {
       objects.push(makeObject(seg.index, "guardrail", "left", rng));
       objects.push(makeObject(seg.index, "guardrail", "right", rng));
     }
 
-    // Streetlight: one per STREETLIGHT_INTERVAL segments, alternating sides.
-    if (seg.index % STREETLIGHT_INTERVAL === 0) {
+    // Streetlight: one per STREETLIGHT_INTERVAL segments, alternating
+    // sides. Inside tunnels the frames carry the warm lights instead.
+    if (seg.zone !== "tunnel" && seg.index % STREETLIGHT_INTERVAL === 0) {
       const side = seg.index % (STREETLIGHT_INTERVAL * 2) < STREETLIGHT_INTERVAL
         ? "left"
         : "right";
       objects.push(makeObject(seg.index, "streetlight", side, rng));
+    }
+
+    // Tunnel: every segment carries one mask/frame object; entryDist and
+    // exitDist (in segments) drive the fade so entering and leaving the
+    // tunnel never snaps the whole screen dark or bright in one frame.
+    if (seg.zone === "tunnel") {
+      const run = findRunForIndex(tunnelRuns, seg.index);
+      if (run) {
+        objects.push(makeTunnelFrame(seg.index, run[0], run[1]));
+      }
     }
 
     // Buildings, at most one per segment. Which side is attempted is
@@ -88,6 +101,56 @@ function makeCityBuilding(
     width,
     height: rng.pick(BUILDING_HEIGHTS) + rng.range(-300, 300),
     colorVariant: rng.int(0, 1),
+  };
+}
+
+/**
+ * Consecutive [startIndex, endIndex] runs of segments in `zone`, used to
+ * compute fade distances for zone-spanning scenery. A run that wraps the
+ * loop boundary (first and last segments both in zone) is merged so the
+ * fade stays continuous across the seam.
+ */
+function findZoneRuns(segments: RoadSegment[], zone: RoadZone): Array<[number, number]> {
+  const runs: Array<[number, number]> = [];
+  let start = -1;
+  for (let i = 0; i <= segments.length; i++) {
+    const inZone = i < segments.length && segments[i]?.zone === zone;
+    if (inZone && start < 0) start = i;
+    if (!inZone && start >= 0) {
+      runs.push([start, i - 1]);
+      start = -1;
+    }
+  }
+  const first = runs[0];
+  const last = runs[runs.length - 1];
+  if (first && last && first !== last && first[0] === 0 && last[1] === segments.length - 1) {
+    runs[0] = [last[0], first[1]];
+    runs.pop();
+  }
+  return runs;
+}
+
+function findRunForIndex(runs: Array<[number, number]>, index: number): [number, number] | undefined {
+  return runs.find(([start, end]) => index >= start && index <= end);
+}
+
+/** One tunnel segment's wall/ceiling mask plus structural frame slot. */
+function makeTunnelFrame(
+  segmentIndex: number,
+  runStart: number,
+  runEnd: number,
+): SceneryObject {
+  return {
+    id: `s${segmentIndex}-tunnel-frame`,
+    kind: "tunnel-frame",
+    segmentIndex,
+    side: "left",
+    offset: gameConfig.roadHalfWidth * 1.5,
+    width: 400,
+    height: 2600,
+    colorVariant: 0,
+    entryDist: segmentIndex - runStart,
+    exitDist: runEnd - segmentIndex,
   };
 }
 
