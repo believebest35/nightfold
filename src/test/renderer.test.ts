@@ -185,6 +185,24 @@ function countFullScreenMasks(canvas: RecordingCanvas): number {
   ).length;
 }
 
+function countInteriorRibStrokes(canvas: RecordingCanvas): number {
+  // Ordinary ribs are one beam path (two points); portal silhouettes use
+  // three sub-lines (six points).
+  return canvas.strokedPaths.filter(({ points }) => points.length === 2).length;
+}
+
+function countInteriorLamps(canvas: RecordingCanvas): number {
+  return canvas.fillRectStyles.filter(({ fillStyle }) =>
+    typeof fillStyle === "string" && fillStyle.startsWith("rgba(240,184,90,"),
+  ).length;
+}
+
+function countEntranceMouths(canvas: RecordingCanvas): number {
+  return canvas.filledPaths.filter(({ fillStyle }) =>
+    typeof fillStyle === "string" && fillStyle.startsWith("rgba(8,11,20,0.72"),
+  ).length;
+}
+
 describe("frame-level tunnel environment", () => {
   it("draws at most one full-screen environment mask for many tunnel segments", () => {
     const canvas = makeRecordingCanvas();
@@ -446,6 +464,113 @@ describe("frame-level tunnel environment", () => {
       silentSky,
     );
     expect(canvas.clipCount).toBe(0);
+  });
+
+  it("uses portal-only rendering outside the tunnel", () => {
+    const canvas = makeRecordingCanvas();
+    const segments = tunnelSegments(5);
+    const firstSegment = segments[0];
+    const firstFrame = firstSegment?.scenery[0];
+    if (!firstSegment || !firstFrame) throw new Error("missing entrance frame");
+    firstSegment.scenery[0] = { ...firstFrame, entryDist: 0, exitDist: 4 };
+    renderFrame(
+      canvas.ctx,
+      makeRenderContext(canvas),
+      segments,
+      makeState({
+        cameraZ: -1000,
+        cameraZone: "elevated",
+        cameraZoneEntryDist: undefined,
+        cameraZoneExitDist: undefined,
+        currentSegment: undefined,
+      }),
+      silentSky,
+    );
+
+    expect(countEntranceMouths(canvas)).toBe(1);
+    expect(countInteriorRibStrokes(canvas)).toBe(0);
+    expect(countInteriorLamps(canvas)).toBe(0);
+    expect(canvas.strokedPaths.filter(({ points }) => points.length === 6)).toHaveLength(1);
+  });
+
+  it("keeps only the nearest entrance when a later tunnel run is visible", () => {
+    const canvas = makeRecordingCanvas();
+    const segments = tunnelSegments(8).map((segment, index) => {
+      if (index >= 3 && index <= 4) {
+        return { ...segment, zone: "city" as const, scenery: [] };
+      }
+      return segment;
+    });
+    const firstSegment = segments[0];
+    const laterSegment = segments[5];
+    const firstFrame = firstSegment?.scenery[0];
+    const laterFrame = laterSegment?.scenery[0];
+    if (!firstSegment || !laterSegment || !firstFrame || !laterFrame) {
+      throw new Error("missing tunnel entrance frames");
+    }
+    firstSegment.scenery[0] = { ...firstFrame, entryDist: 0, exitDist: 2 };
+    laterSegment.scenery[0] = { ...laterFrame, entryDist: 0, exitDist: 2 };
+    renderFrame(
+      canvas.ctx,
+      makeRenderContext(canvas),
+      segments,
+      makeState({
+        cameraZ: -1000,
+        cameraZone: "elevated",
+        cameraZoneEntryDist: undefined,
+        cameraZoneExitDist: undefined,
+        currentSegment: undefined,
+      }),
+      silentSky,
+    );
+
+    expect(countEntranceMouths(canvas)).toBe(1);
+    expect(canvas.strokedPaths.filter(({ points }) => points.length === 6)).toHaveLength(1);
+    expect(countInteriorRibStrokes(canvas)).toBe(0);
+    expect(countInteriorLamps(canvas)).toBe(0);
+  });
+
+  it("keeps the clipped interior detail pass when the camera is inside", () => {
+    const canvas = makeRecordingCanvas();
+    renderFrame(
+      canvas.ctx,
+      makeRenderContext(canvas),
+      tunnelSegments(24),
+      makeState(),
+      silentSky,
+    );
+
+    expect(countInteriorRibStrokes(canvas)).toBeGreaterThan(0);
+    expect(countInteriorLamps(canvas)).toBeGreaterThan(0);
+    expect(canvas.clipCount).toBeGreaterThan(0);
+  });
+
+  it("keeps outside portal-only behavior stable across player lateral positions", () => {
+    for (const playerX of [-0.8, 0, 0.8]) {
+      const canvas = makeRecordingCanvas();
+      const segments = tunnelSegments(5);
+      const firstSegment = segments[0];
+      const frame = firstSegment?.scenery[0];
+      if (!firstSegment || !frame) throw new Error("missing lateral entrance frame");
+      firstSegment.scenery[0] = { ...frame, entryDist: 0, exitDist: 4 };
+      renderFrame(
+        canvas.ctx,
+        makeRenderContext(canvas),
+        segments,
+        makeState({
+          cameraZ: -1000,
+          cameraZone: "elevated",
+          cameraZoneEntryDist: undefined,
+          cameraZoneExitDist: undefined,
+          currentSegment: undefined,
+          playerX,
+        }),
+        silentSky,
+      );
+      expect(countEntranceMouths(canvas), `playerX=${playerX}`).toBe(1);
+      expect(countInteriorRibStrokes(canvas), `playerX=${playerX}`).toBe(0);
+      expect(countInteriorLamps(canvas), `playerX=${playerX}`).toBe(0);
+    }
   });
 
   it("draws a portal with a beam and two supported side posts", () => {

@@ -93,6 +93,12 @@ export function renderFrame(
   const projected = projectSegmentsAhead(segments, projParams, projInput);
   const clip = createRoadClipState();
   const cameraInsideTunnel = state.cameraZone === "tunnel";
+  // Outside the tunnel, only the first tunnel segment is allowed to expose
+  // its entrance portal. Every other tunnel frame stays hidden until the
+  // camera enters and the aperture-clipped post pass takes over.
+  const outsideTunnelEntrance = cameraInsideTunnel
+    ? undefined
+    : projected.find((ps) => ps.seg.zone === "tunnel");
   const tunnelDetailSegments = new Set<ProjectedSegment>();
   const currentTunnelRun: ProjectedSegment[] = [];
   const currentTunnelSegment = cameraInsideTunnel && state.currentSegment?.zone === "tunnel"
@@ -127,10 +133,16 @@ export function renderFrame(
     const replacementFade = zoneReplacementFade(ps);
     const vis = renderRoadSegment(ctx, ps, projParams, state.debug, clip, replacementFade);
     if (vis.visible) {
+      const isTunnelSegment = ps.seg.zone === "tunnel";
       renderSceneryForSegment(ctx, ps, projParams, vis.clipTopY, {
         // Only the current run is redrawn above the environment. Later
         // tunnel runs keep their normal far → near detail order.
-        drawTunnelDetails: !tunnelDetailSegments.has(ps),
+        drawTunnelDetails: isTunnelSegment
+          ? cameraInsideTunnel
+            ? !tunnelDetailSegments.has(ps)
+            : false
+          : true,
+        drawTunnelPortal: !cameraInsideTunnel && ps === outsideTunnelEntrance,
       });
       visibleSegments.push({ ps, clipTopY: vis.clipTopY });
     }

@@ -47,11 +47,15 @@ export interface TunnelApertureGeometry {
 export interface SceneryRenderOptions {
   /** Draw tunnel beams/lights in the normal painter pass. */
   drawTunnelDetails?: boolean;
+  /** Draw only the entrance portal for the selected outside-view segment. */
+  drawTunnelPortal?: boolean;
 }
 
 export interface TunnelDetailOptions {
   /** The entrance is behind the camera once the camera is in the run. */
   suppressEntrancePortal?: boolean;
+  /** Outside views never expose an exit on the same object. */
+  suppressExitPortal?: boolean;
 }
 
 export interface TunnelPortalGeometry {
@@ -87,8 +91,9 @@ export function renderSceneryForSegment(
   options: SceneryRenderOptions = {},
 ): void {
   const drawTunnelDetails = options.drawTunnelDetails ?? true;
+  const drawTunnelPortal = options.drawTunnelPortal ?? false;
   for (const obj of ps.seg.scenery) {
-    renderObject(ctx, obj, ps, params, clipTopY, drawTunnelDetails);
+    renderObject(ctx, obj, ps, params, clipTopY, drawTunnelDetails, drawTunnelPortal);
   }
 }
 
@@ -124,6 +129,7 @@ function renderObject(
   params: ProjectionParams,
   clipTopY: number,
   drawTunnelDetails: boolean,
+  drawTunnelPortal: boolean,
 ): void {
   switch (obj.kind) {
     case "building":
@@ -136,7 +142,11 @@ function renderObject(
       renderGuardrail(ctx, obj, ps, params, clipTopY);
       break;
     case "tunnel-frame":
-      if (drawTunnelDetails) {
+      if (drawTunnelPortal && isEntrancePortal(obj)) {
+        renderTunnelFrameDetails(ctx, obj, ps, params, clipTopY, {
+          suppressExitPortal: true,
+        });
+      } else if (drawTunnelDetails) {
         renderTunnelFrameDetails(ctx, obj, ps, params, clipTopY);
       }
       break;
@@ -371,7 +381,7 @@ function renderTunnelFrameDetails(
     if (drawEntrance) {
       renderTunnelPortal(ctx, ps, params, true, tunnelFade(obj));
     }
-    if (exitPortal) {
+    if (exitPortal && !options.suppressExitPortal) {
       renderTunnelPortal(ctx, ps, params, false, tunnelFade(obj));
     }
     return;
