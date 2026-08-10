@@ -58,8 +58,8 @@ describe("attachScenery", () => {
     const segments = roadWithScenery(42);
     for (const seg of segments) {
       const rails = seg.scenery.filter((o) => o.kind === "guardrail");
-      if (seg.zone === "tunnel") {
-        // Tunnel walls replace the rails.
+      if (seg.zone === "tunnel" || seg.zone === "riverside") {
+        // Tunnel walls and the river bank replace the rails.
         expect(rails.length).toBe(0);
         continue;
       }
@@ -226,5 +226,56 @@ describe("attachScenery", () => {
       runEnd - runStart,
     );
     expect(midFrame.entryDist ?? 0).toBeGreaterThanOrEqual(20);
+  });
+
+  it("gives every riverside segment one river on the left bank", () => {
+    const segments = roadWithScenery(42);
+    let riverSegs = 0;
+    for (const seg of segments) {
+      const rivers = seg.scenery.filter((o) => o.kind === "river");
+      if (seg.zone === "riverside") {
+        riverSegs++;
+        expect(rivers.length).toBe(1);
+        expect(rivers[0]?.side).toBe("left");
+        // The bank edge stays clear of the road shoulder.
+        const innerEdge = (rivers[0]?.offset ?? 0) - (rivers[0]?.width ?? 0) / 2;
+        expect(innerEdge).toBeGreaterThanOrEqual(SHOULDER_HALF_WIDTH);
+      } else {
+        expect(rivers.length).toBe(0);
+      }
+    }
+    expect(riverSegs).toBeGreaterThan(0);
+  });
+
+  it("fades the river at the riverside run boundaries", () => {
+    const segments = roadWithScenery(42);
+    const riverSegs = segments.filter((s) => s.zone === "riverside");
+    const runStart = riverSegs[0]?.index ?? 0;
+    const runEnd = riverSegs[riverSegs.length - 1]?.index ?? 0;
+    for (const seg of riverSegs) {
+      const river = seg.scenery.find((o) => o.kind === "river");
+      if (!river) throw new Error("missing river");
+      expect(river.entryDist).toBe(seg.index - runStart);
+      expect(river.exitDist).toBe(runEnd - seg.index);
+    }
+    expect(riverSegs[0]?.scenery.find((o) => o.kind === "river")?.entryDist).toBe(0);
+    expect(
+      riverSegs[riverSegs.length - 1]?.scenery.find((o) => o.kind === "river")?.exitDist,
+    ).toBe(0);
+  });
+
+  it("places bridge silhouettes rarely and only in the riverside", () => {
+    const segments = roadWithScenery(42);
+    let bridges = 0;
+    for (const seg of segments) {
+      for (const o of seg.scenery) {
+        if (o.kind !== "bridge") continue;
+        bridges++;
+        expect(seg.zone).toBe("riverside");
+      }
+    }
+    // One or two bridges over the 40-segment riverside run at most.
+    expect(bridges).toBeGreaterThan(0);
+    expect(bridges).toBeLessThanOrEqual(2);
   });
 });

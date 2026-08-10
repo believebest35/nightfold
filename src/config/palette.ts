@@ -13,6 +13,7 @@ export const palette = {
   guardrail: "#596273",
   tunnelInterior: "#080b14",
   tunnelFrame: "#1b2233",
+  water: "#0a1220",
   buildingNear: "#111521",
   buildingFar: "#161b2b",
   windowWarm: "#f0b85a",

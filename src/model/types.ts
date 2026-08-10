@@ -29,7 +29,14 @@ export interface RoadSegment {
   scenery: SceneryObject[];
 }
 
-export type SceneryKind = "building" | "streetlight" | "guardrail" | "sign" | "tunnel-frame";
+export type SceneryKind =
+  | "building"
+  | "streetlight"
+  | "guardrail"
+  | "sign"
+  | "tunnel-frame"
+  | "river"
+  | "bridge";
 
 export interface SceneryObject {
   id: string;

@@ -264,7 +264,10 @@ function drawGuardrailRibbon(
   clipTopY: number,
   clipBottomY: number,
 ): void {
-  for (const side of [-1, 1] as const) {
+  // Riverside keeps only the rail on the non-river bank (side +1);
+  // the tunnel has no rails at all (walls replace them).
+  const sides: Array<-1 | 1> = ps.seg.zone === "riverside" ? [1] : [-1, 1];
+  for (const side of sides) {
     const g = guardrailRibbonGeometry(ps, params, side);
     const face = guardrailRibbonFace(g, side, clipTopY, clipBottomY);
     if (!face) continue;

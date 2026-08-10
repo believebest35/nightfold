@@ -14,6 +14,8 @@ const ELEVATED_GUARDRAIL_INTERVAL = 8;
 const BUILDING_CHANCE = 0.55;
 // The elevated low building layer is sparser than the city's towers.
 const ELEVATED_BUILDING_CHANCE = 0.35;
+// Bridge silhouette every N riverside segments (rare, large landmark).
+const BRIDGE_INTERVAL = 30;
 
 /** Building height variants (world units) — at least 3 silhouettes per kind. */
 const BUILDING_HEIGHTS = [1800, 3200, 5200, 7600] as const;
@@ -32,13 +34,19 @@ function guardrailInterval(zone: RoadZone): number {
 export function attachScenery(segments: RoadSegment[], seed: number): void {
   const rng = new SeededRandom(seed);
   const tunnelRuns = findZoneRuns(segments, "tunnel");
+  const riverRuns = findZoneRuns(segments, "riverside");
 
   for (const seg of segments) {
     const objects: SceneryObject[] = [];
 
     // Guardrail support posts: every guardrailInterval segments, both
-    // sides. Tunnel walls replace the rails inside tunnels.
-    if (seg.zone !== "tunnel" && seg.index % guardrailInterval(seg.zone) === 0) {
+    // sides. Tunnel walls and the river bank replace them where the
+    // road runs inside or beside water.
+    if (
+      seg.zone !== "tunnel" &&
+      seg.zone !== "riverside" &&
+      seg.index % guardrailInterval(seg.zone) === 0
+    ) {
       objects.push(makeObject(seg.index, "guardrail", "left", rng));
       objects.push(makeObject(seg.index, "guardrail", "right", rng));
     }
@@ -59,6 +67,19 @@ export function attachScenery(segments: RoadSegment[], seed: number): void {
       const run = findRunForIndex(tunnelRuns, seg.index);
       if (run) {
         objects.push(makeTunnelFrame(seg.index, run[0], run[1]));
+      }
+    }
+
+    // Riverside: the river hugs the left bank for the whole run, with
+    // the same seam fades as the tunnel; a rare bridge silhouette
+    // crosses it (plan §12.4).
+    if (seg.zone === "riverside") {
+      const run = findRunForIndex(riverRuns, seg.index);
+      if (run) {
+        objects.push(makeRiver(seg.index, run[0], run[1]));
+        if (seg.index % BRIDGE_INTERVAL === 0) {
+          objects.push(makeBridge(seg.index));
+        }
       }
     }
 
@@ -151,6 +172,44 @@ function makeTunnelFrame(
     colorVariant: 0,
     entryDist: segmentIndex - runStart,
     exitDist: runEnd - segmentIndex,
+  };
+}
+
+/** The dark river surface on the left bank (plan §12.4). */
+function makeRiver(
+  segmentIndex: number,
+  runStart: number,
+  runEnd: number,
+): SceneryObject {
+  // The bank (inner edge = offset - width/2) sits just outside the
+  // shoulder; the river then stretches away from the road.
+  const bank = gameConfig.roadHalfWidth * 1.5;
+  const width = 4000;
+  return {
+    id: `s${segmentIndex}-river`,
+    kind: "river",
+    segmentIndex,
+    side: "left",
+    offset: bank + width / 2,
+    width,
+    height: 0,
+    colorVariant: 0,
+    entryDist: segmentIndex - runStart,
+    exitDist: runEnd - segmentIndex,
+  };
+}
+
+/** A rare distant bridge silhouette crossing the river. */
+function makeBridge(segmentIndex: number): SceneryObject {
+  return {
+    id: `s${segmentIndex}-bridge`,
+    kind: "bridge",
+    segmentIndex,
+    side: "left",
+    offset: gameConfig.roadHalfWidth * 1.5 + 800,
+    width: 5000,
+    height: 900,
+    colorVariant: 0,
   };
 }
 

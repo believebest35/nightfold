@@ -4,6 +4,7 @@ import type { SceneryObject } from "../model/types.ts";
 import { projectWorldPoint } from "./projection.ts";
 import { colorRgba, fogFactor, mixWithFog, parseHex } from "./fog.ts";
 import { palette } from "../config/palette.ts";
+import { gameConfig } from "../config/game-config.ts";
 
 /** Skip objects whose projected half-width falls below this (px). */
 const MIN_SCREEN_HALF_WIDTH = 2;
@@ -70,6 +71,12 @@ function renderObject(
       break;
     case "tunnel-frame":
       renderTunnelFrame(ctx, obj, ps, params, clipTopY);
+      break;
+    case "river":
+      renderRiver(ctx, obj, ps, params, clipTopY);
+      break;
+    case "bridge":
+      renderBridge(ctx, obj, ps, params, clipTopY);
       break;
     default:
       break; // sign arrives with its zone later
@@ -328,6 +335,122 @@ function renderTunnelFrame(
   ctx.fillStyle = colorRgba(parseHex(palette.windowWarm), fade * 0.9);
   const lampW = Math.max(ps.far.halfWidth * 0.16, 2);
   ctx.fillRect(ps.far.x - lampW / 2, clipTopY - 3, lampW, 3);
+}
+
+/**
+ * Dark river surface on the left bank with simplified warm reflection
+ * streaks (plan §12.4). The bank edge runs just outside the shoulder;
+ * the surface polygon spans from there to the left screen edge, and the
+ * streaks are deterministic per segment and fade with the same seam
+ * factor as the tunnel.
+ */
+function renderRiver(
+  ctx: CanvasRenderingContext2D,
+  obj: SceneryObject,
+  ps: ProjectedSegment,
+  params: ProjectionParams,
+  clipTopY: number,
+): void {
+  const fade = tunnelFade(obj);
+  if (fade <= 0) return;
+
+  const clipBottomY = Math.min(ps.near.y, params.screenHeight);
+  const nearGroundY = ps.seg.p1.world.worldY;
+  const farGroundY = ps.seg.p2.world.worldY;
+  const innerEdge = obj.offset - obj.width / 2;
+  const zFar = ps.zBase + gameConfig.segmentLength;
+
+  // Surface: from the bank (road-facing edge of the river) out to the
+  // left screen edge, bounded by the segment's clip band.
+  const nearBank = projectWorldPoint(
+    { worldX: ps.centerOffsetNear - innerEdge, worldY: nearGroundY, worldZ: ps.zBase },
+    params,
+  );
+  const farBank = projectWorldPoint(
+    { worldX: ps.centerOffsetFar - innerEdge, worldY: farGroundY, worldZ: zFar },
+    params,
+  );
+
+  ctx.fillStyle = colorRgba(parseHex(palette.water), fade * 0.95);
+  ctx.beginPath();
+  ctx.moveTo(0, clipTopY);
+  ctx.lineTo(farBank.x, Math.max(farBank.y, clipTopY));
+  ctx.lineTo(nearBank.x, clipBottomY);
+  ctx.lineTo(0, clipBottomY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Reflection streaks: two deterministic warm vertical bands inside
+  // the water, fading at the seams and shrinking with distance.
+  const hash = hashString(obj.id);
+  const s1 = innerEdge + (0.15 + (((hash >>> 4) % 100) / 100) * 0.35) * obj.width;
+  const s2 = innerEdge + (0.5 + (((hash >>> 14) % 100) / 100) * 0.4) * obj.width;
+  for (const worldX of [s1, s2]) {
+    const near = projectWorldPoint(
+      { worldX: ps.centerOffsetNear - worldX, worldY: nearGroundY, worldZ: ps.zBase },
+      params,
+    );
+    const far = projectWorldPoint(
+      { worldX: ps.centerOffsetFar - worldX, worldY: farGroundY, worldZ: zFar },
+      params,
+    );
+    if (near.x < 0 || near.x > params.screenWidth) continue;
+    const yTop = Math.max(far.y, clipTopY);
+    const yBottom = Math.min(near.y, clipBottomY);
+    if (yTop >= yBottom) continue;
+    ctx.fillStyle = colorRgba(parseHex(palette.windowWarm), 0.12 * fade);
+    const w = Math.max(near.halfWidth * 0.06, 1.5);
+    ctx.fillRect(near.x - w / 2, yTop, w, yBottom - yTop);
+  }
+}
+
+/**
+ * Rare distant bridge silhouette crossing the river (plan §12.4): a
+ * dark deck with a few piers and cool lights, anchored at the river
+ * side and reaching toward the road.
+ */
+function renderBridge(
+  ctx: CanvasRenderingContext2D,
+  obj: SceneryObject,
+  ps: ProjectedSegment,
+  params: ProjectionParams,
+  clipTopY: number,
+): void {
+  const groundY = ps.seg.p1.world.worldY;
+  const zFar = ps.zBase + gameConfig.segmentLength;
+
+  const near = projectWorldPoint(
+    { worldX: ps.centerOffsetNear - obj.offset, worldY: groundY, worldZ: ps.zBase },
+    { ...params, roadHalfWidth: obj.width / 2 },
+  );
+  const far = projectWorldPoint(
+    { worldX: ps.centerOffsetFar - obj.offset, worldY: groundY, worldZ: zFar },
+    { ...params, roadHalfWidth: obj.width / 2 },
+  );
+  if (near.halfWidth < MIN_SCREEN_HALF_WIDTH) return;
+
+  const deckY = Math.max(
+    far.y - far.scale * obj.height * params.screenHeight * 0.5,
+    clipTopY,
+  );
+  const pierBottomY = Math.max(far.y, clipTopY);
+  if (deckY >= pierBottomY) return;
+
+  const deckEndX = Math.min(near.x + near.halfWidth * 1.2, params.screenWidth);
+
+  ctx.fillStyle = palette.skyline;
+  ctx.fillRect(0, deckY, deckEndX, Math.max(3, (pierBottomY - deckY) * 0.03));
+
+  ctx.fillStyle = palette.skyline;
+  for (const fx of [0.25, 0.5, 0.75]) {
+    ctx.fillRect(deckEndX * fx - 1.5, deckY, 3, pierBottomY - deckY);
+  }
+
+  // Cool deck lights.
+  ctx.fillStyle = colorRgba(parseHex(palette.neonCyan), 0.5);
+  for (const fx of [0.2, 0.45, 0.7, 0.95]) {
+    ctx.fillRect(deckEndX * fx - 1, deckY + 3, 2, 2);
+  }
 }
 
 // ---------------------------------------------------------------------------
