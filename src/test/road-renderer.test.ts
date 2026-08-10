@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { guardrailRibbonFace, guardrailRibbonGeometry } from "../render/road-renderer.ts";
+import {
+  guardrailRibbonFace,
+  guardrailRibbonGeometry,
+  guardrailSideVisibility,
+} from "../render/road-renderer.ts";
 import { projectWorldPoint, type ProjectionParams } from "../render/projection.ts";
 import type { ProjectedSegment } from "../render/projected-segment.ts";
 import type { RoadSegment } from "../model/types.ts";
@@ -116,5 +120,21 @@ describe("guardrailRibbonFace", () => {
     expect(face?.farBottom.y).toBe(clipTopY);
     expect(face?.nearBottom.y).toBe(geometry.nearBottom.y);
     expect(face?.farTop.y).toBe(geometry.farTop.y);
+  });
+});
+
+describe("guardrailSideVisibility", () => {
+  it("keeps tunnel rails at the zero-fade mouth and removes them in the interior", () => {
+    expect(guardrailSideVisibility("tunnel", 0, -1)).toBe(1);
+    expect(guardrailSideVisibility("tunnel", 0, 1)).toBe(1);
+    expect(guardrailSideVisibility("tunnel", 1, -1)).toBe(0);
+    expect(guardrailSideVisibility("tunnel", 1, 1)).toBe(0);
+  });
+
+  it("fades only the river-side rail while retaining the dry-side rail", () => {
+    expect(guardrailSideVisibility("riverside", 0, -1)).toBe(1);
+    expect(guardrailSideVisibility("riverside", 0.5, -1)).toBe(0.5);
+    expect(guardrailSideVisibility("riverside", 1, -1)).toBe(0);
+    expect(guardrailSideVisibility("riverside", 1, 1)).toBe(1);
   });
 });

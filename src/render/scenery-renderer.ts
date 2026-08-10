@@ -15,9 +15,9 @@ const HALO_MAX_Z = 9000;
 /** Tunnel frame every N segments; all tunnel segments carry the mask. */
 const TUNNEL_FRAME_INTERVAL = 6;
 /** Fade the tunnel mask over this many segments at both seams. */
-const TUNNEL_FADE_SEGMENTS = 12;
-/** Mask alpha at full tunnel depth (never fully black — road stays readable). */
-const TUNNEL_MASK_ALPHA = 0.92;
+export const TUNNEL_FADE_SEGMENTS = 12;
+/** One frame-level environment pass; the road and lane markings remain readable. */
+export const TUNNEL_ENVIRONMENT_ALPHA = 0.68;
 /** Max window cell size on screen (px) — keeps near windows small. */
 const MAX_WINDOW_WIDTH = 12;
 const MAX_WINDOW_HEIGHT = 16;
@@ -26,6 +26,7 @@ export const WINDOW_LIT_RATIO = 0.25;
 
 const buildingNearRgb = parseHex(palette.buildingNear);
 const buildingFarRgb = parseHex(palette.buildingFar);
+const tunnelEnvironmentRgb = parseHex("#000000");
 
 /**
  * Horizontal world offset of an object from the road center, signed by
@@ -49,6 +50,24 @@ export function renderSceneryForSegment(
 ): void {
   for (const obj of ps.seg.scenery) {
     renderObject(ctx, obj, ps, params, clipTopY);
+  }
+}
+
+/**
+ * Draw only the tunnel beams and lamps for a second pass after the single
+ * environment overlay. Keeping these details after the overlay preserves
+ * the warm lights instead of letting the darkness pass cover them.
+ */
+export function renderTunnelFrameDetailsForSegment(
+  ctx: CanvasRenderingContext2D,
+  ps: ProjectedSegment,
+  params: ProjectionParams,
+  clipTopY: number,
+): void {
+  for (const obj of ps.seg.scenery) {
+    if (obj.kind === "tunnel-frame") {
+      renderTunnelFrameDetails(ctx, obj, ps, params, clipTopY);
+    }
   }
 }
 
@@ -91,6 +110,16 @@ function segmentFog(ps: ProjectedSegment, params: ProjectionParams): number {
 /** Visible screen band for an object rooted at `baseY`, capped below by the crest. */
 function visibleBand(baseY: number, clipTopY: number): number {
   return Math.max(baseY, clipTopY);
+}
+
+function guardrailAlpha(ps: ProjectedSegment, side: "left" | "right"): number {
+  const zoneObject = ps.seg.scenery.find((candidate) =>
+    candidate.kind === "tunnel-frame" || candidate.kind === "river",
+  );
+  const replacementFade = zoneObject ? tunnelFade(zoneObject) : 0;
+  if (ps.seg.zone === "tunnel") return 1 - replacementFade;
+  if (ps.seg.zone === "riverside" && side === "left") return 1 - replacementFade;
+  return 1;
 }
 
 function renderBuilding(
@@ -268,19 +297,22 @@ function renderGuardrail(
   if (top.y >= bottomY) return;
 
   const t = segmentFog(ps, params);
+  const alpha = guardrailAlpha(ps, obj.side);
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
   ctx.fillStyle = mixWithFog(parseHex(palette.guardrail), t);
   ctx.fillRect(base.x - base.halfWidth, top.y, base.halfWidth * 2, bottomY - top.y);
+  ctx.restore();
 }
 
 /**
- * Tunnel wall/ceiling mask plus structural frames (plan §12.3).
+ * Tunnel wall geometry (plan §12.3).
  *
- * Every tunnel segment darkens the screen above and beside its road band
- * so no sky or skyline shows through the tunnel; the strength ramps from
- * the entrance and mirrors at the exit, which is what makes entering and
- * leaving a tunnel a fade instead of a snap. Every TUNNEL_FRAME_INTERVAL
- * segments additionally draws a crossbeam with a warm lamp at the far
- * edge — the lights that rush past the driver.
+ * The large environment darkness is deliberately not drawn here: this
+ * function is called once per visible tunnel segment and a repeated alpha
+ * overlay would make the frame approach opaque black. The frame-level
+ * renderer owns that single pass; this function only draws local walls.
  *
  * The wall polygon approximates the road's clip-band edge with the raw
  * near/far projections; at hill crests the tiny seam is hidden by the
@@ -294,17 +326,15 @@ function renderTunnelFrame(
   clipTopY: number,
 ): void {
   const fade = tunnelFade(obj);
-  if (fade <= 0) return;
-
   const clipBottomY = Math.min(ps.near.y, params.screenHeight);
-  const maskColor = colorRgba(parseHex(palette.tunnelInterior), fade * TUNNEL_MASK_ALPHA);
-
-  // Ceiling mask: everything above the road's top edge.
-  ctx.fillStyle = maskColor;
-  ctx.fillRect(0, 0, params.screenWidth, clipTopY);
+  // A small local wall opacity keeps the portal readable even at the
+  // entrance, while the frame-level environment pass handles the interior.
+  const wallAlpha = 0.28 + fade * 0.35;
+  const wallColor = colorRgba(parseHex(palette.tunnelInterior), wallAlpha);
 
   // Side walls: from the road edges out to the screen sides, bounded by
   // the segment's clip band.
+  ctx.fillStyle = wallColor;
   ctx.beginPath();
   ctx.moveTo(0, clipTopY);
   ctx.lineTo(ps.far.x - ps.far.halfWidth, clipTopY);
@@ -319,10 +349,22 @@ function renderTunnelFrame(
   ctx.lineTo(params.screenWidth, clipBottomY);
   ctx.closePath();
   ctx.fill();
+}
 
+function renderTunnelFrameDetails(
+  ctx: CanvasRenderingContext2D,
+  obj: SceneryObject,
+  ps: ProjectedSegment,
+  params: ProjectionParams,
+  clipTopY: number,
+): void {
   if (obj.segmentIndex % TUNNEL_FRAME_INTERVAL !== 0) return;
+  const fade = tunnelFade(obj);
+  const structureAlpha = Math.max(0.3, fade);
 
   // Crossbeam at the far edge of the segment.
+  ctx.save();
+  ctx.globalAlpha = structureAlpha;
   ctx.strokeStyle = mixWithFog(parseHex(palette.tunnelFrame), segmentFog(ps, params));
   ctx.lineWidth = 3;
   ctx.beginPath();
@@ -331,9 +373,10 @@ function renderTunnelFrame(
   ctx.stroke();
 
   // Warm lamp at the crossbeam center.
-  ctx.fillStyle = colorRgba(parseHex(palette.windowWarm), fade * 0.9);
+  ctx.fillStyle = colorRgba(parseHex(palette.windowWarm), 0.35 + structureAlpha * 0.55);
   const lampW = Math.max(ps.far.halfWidth * 0.16, 2);
   ctx.fillRect(ps.far.x - lampW / 2, clipTopY - 3, lampW, 3);
+  ctx.restore();
 }
 
 /**
@@ -457,6 +500,47 @@ function renderBridge(
 // ---------------------------------------------------------------------------
 
 /**
+ * Darkness for the current camera, evaluated continuously within its
+ * segment. A camera outside the tunnel always returns 0, even if tunnel
+ * segments are visible ahead in the draw distance.
+ */
+export function tunnelEnvironmentFade(
+  cameraZone: "city" | "elevated" | "tunnel" | "riverside",
+  entryDist?: number,
+  exitDist?: number,
+  segmentProgress = 0,
+): number {
+  if (cameraZone !== "tunnel" || entryDist === undefined || exitDist === undefined) {
+    return 0;
+  }
+  const progress = clamp(segmentProgress, 0, 1);
+  return zoneFade(entryDist + progress, exitDist + (1 - progress));
+}
+
+/** Draw the tunnel environment darkness exactly once for the whole frame. */
+export function renderTunnelEnvironment(
+  ctx: CanvasRenderingContext2D,
+  params: ProjectionParams,
+  fade: number,
+): void {
+  if (fade <= 0) return;
+  ctx.save();
+  ctx.fillStyle = colorRgba(tunnelEnvironmentRgb, fade * TUNNEL_ENVIRONMENT_ALPHA);
+  ctx.fillRect(0, 0, params.screenWidth, params.screenHeight);
+  ctx.restore();
+}
+
+function zoneFade(entryDist: number, exitDist: number): number {
+  if (!Number.isFinite(entryDist) || !Number.isFinite(exitDist)) return 0;
+  const entry = Math.max(entryDist, 0);
+  const exit = Math.max(exitDist, 0);
+  return Math.max(
+    Math.min(entry / TUNNEL_FADE_SEGMENTS, exit / TUNNEL_FADE_SEGMENTS, 1),
+    0,
+  );
+}
+
+/**
  * A streetlight lamp head is visible only above the crest clip line.
  * Screen Y grows downward, so a smaller topY means the head is higher.
  */
@@ -502,8 +586,8 @@ export function windowCellLit(id: string, row: number, col: number): boolean {
 export function tunnelFade(obj: SceneryObject): number {
   const entry = obj.entryDist ?? 0;
   const exit = obj.exitDist ?? 0;
-  const f = Math.min(entry / TUNNEL_FADE_SEGMENTS, exit / TUNNEL_FADE_SEGMENTS, 1);
-  return Math.max(f, 0);
+  if (obj.entryDist === undefined || obj.exitDist === undefined) return 0;
+  return zoneFade(entry, exit);
 }
 
 function clamp(value: number, min: number, max: number): number {

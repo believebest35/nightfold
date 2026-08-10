@@ -1,8 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { attachScenery } from "../world/scenery-generator.ts";
+import {
+  attachScenery,
+  findRunForIndex,
+  findZoneRuns,
+  getZoneRunDistances,
+} from "../world/scenery-generator.ts";
 import { buildDefaultRoad } from "../world/road-generator.ts";
 import { gameConfig } from "../config/game-config.ts";
-import type { RoadSegment, SceneryObject } from "../model/types.ts";
+import type { RoadSegment, RoadZone, SceneryObject } from "../model/types.ts";
+import { tunnelFade } from "../render/scenery-renderer.ts";
 
 /** Shoulder half-width in world units. */
 const SHOULDER_HALF_WIDTH = gameConfig.roadHalfWidth * 1.4;
@@ -17,6 +23,24 @@ function roadWithScenery(seed: number): RoadSegment[] {
   const road = buildDefaultRoad();
   attachScenery(road.segments, seed);
   return road.segments;
+}
+
+function segmentsForZones(zones: RoadZone[]): RoadSegment[] {
+  return zones.map((zone, index) => ({
+    index,
+    p1: { world: { worldX: 0, worldY: 0, worldZ: index * gameConfig.segmentLength } },
+    p2: {
+      world: {
+        worldX: 0,
+        worldY: 0,
+        worldZ: (index + 1) * gameConfig.segmentLength,
+      },
+    },
+    curve: 0,
+    zone,
+    colorVariant: (index % 2) as 0 | 1,
+    scenery: [],
+  }));
 }
 
 describe("attachScenery", () => {
@@ -48,6 +72,7 @@ describe("attachScenery", () => {
         expect(lights.length).toBe(0);
       } else if (seg.index % 6 === 0) {
         expect(lights.length).toBe(1);
+        if (seg.zone === "riverside") expect(lights[0]?.side).toBe("right");
       } else {
         expect(lights.length).toBe(0);
       }
@@ -59,8 +84,14 @@ describe("attachScenery", () => {
     for (const seg of segments) {
       const rails = seg.scenery.filter((o) => o.kind === "guardrail");
       if (seg.zone === "tunnel" || seg.zone === "riverside") {
-        // Tunnel walls and the river bank replace the rails.
-        expect(rails.length).toBe(0);
+        const zoneIndices = segments
+          .filter((candidate) => candidate.zone === seg.zone)
+          .map((candidate) => candidate.index);
+        const atBoundary = seg.index === zoneIndices[0] ||
+          seg.index === zoneIndices[zoneIndices.length - 1];
+        // The first/last zone segment keeps support posts while the
+        // replacement scenery is still at zero fade.
+        expect(rails.length > 0).toBe(atBoundary);
         continue;
       }
       const interval = seg.zone === "elevated" ? 8 : 4;
@@ -277,5 +308,81 @@ describe("attachScenery", () => {
     // One or two bridges over the 40-segment riverside run at most.
     expect(bridges).toBeGreaterThan(0);
     expect(bridges).toBeLessThanOrEqual(2);
+  });
+
+  it("represents a wrapped zone run explicitly and keeps distances non-negative", () => {
+    const segments = segmentsForZones([
+      "tunnel", "tunnel", "city", "city", "tunnel", "tunnel",
+    ]);
+    const runs = findZoneRuns(segments, "tunnel");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toEqual({ start: 4, end: 1, wraps: true, length: 4 });
+
+    const distances = [4, 5, 0, 1].map((index) => {
+      const run = findRunForIndex(runs, index, segments.length);
+      if (!run) throw new Error(`missing wrapped run for ${index}`);
+      return getZoneRunDistances(run, index, segments.length);
+    });
+    expect(distances).toEqual([
+      { entryDist: 0, exitDist: 3 },
+      { entryDist: 1, exitDist: 2 },
+      { entryDist: 2, exitDist: 1 },
+      { entryDist: 3, exitDist: 0 },
+    ]);
+    for (const distance of distances) {
+      expect(distance?.entryDist).toBeGreaterThanOrEqual(0);
+      expect(distance?.exitDist).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("generates wrapped tunnel and river scenery across the loop seam", () => {
+    const tunnelSegments = segmentsForZones([
+      "tunnel", "tunnel", "city", "city", "tunnel", "tunnel",
+    ]);
+    attachScenery(tunnelSegments, 42);
+    const tunnelFrames = tunnelSegments
+      .filter((seg) => seg.zone === "tunnel")
+      .map((seg) => seg.scenery.find((obj) => obj.kind === "tunnel-frame"));
+    expect(tunnelFrames.every((frame) => frame !== undefined)).toBe(true);
+    expect(tunnelFrames.map((frame) => [frame?.entryDist, frame?.exitDist])).toEqual([
+      [2, 1],
+      [3, 0],
+      [0, 3],
+      [1, 2],
+    ]);
+    for (const frame of tunnelFrames) {
+      expect(frame?.entryDist).toBeGreaterThanOrEqual(0);
+      expect(frame?.exitDist).toBeGreaterThanOrEqual(0);
+    }
+    // The seam is continuous: the last array segment and the first array
+    // segment are adjacent in the same circular run.
+    const seamBefore = tunnelFrames[1];
+    const seamAfter = tunnelFrames[2];
+    if (!seamBefore || !seamAfter) throw new Error("missing wrapped tunnel seam");
+    expect(tunnelFade(seamBefore)).toBeCloseTo(tunnelFade(seamAfter));
+
+    const riverSegments = segmentsForZones([
+      "riverside", "city", "city", "riverside",
+    ]);
+    attachScenery(riverSegments, 42);
+    const rivers = riverSegments
+      .filter((seg) => seg.zone === "riverside")
+      .map((seg) => seg.scenery.find((obj) => obj.kind === "river"));
+    expect(rivers.every((river) => river !== undefined)).toBe(true);
+    expect(rivers.map((river) => [river?.entryDist, river?.exitDist])).toEqual([
+      [1, 0],
+      [0, 1],
+    ]);
+  });
+
+  it("keeps riverside streetlights on the dry right bank", () => {
+    const segments = segmentsForZones([
+      "riverside", "riverside", "riverside", "riverside", "riverside", "riverside",
+    ]);
+    attachScenery(segments, 42);
+    for (const seg of segments) {
+      const light = seg.scenery.find((obj) => obj.kind === "streetlight");
+      if (light) expect(light.side).toBe("right");
+    }
   });
 });

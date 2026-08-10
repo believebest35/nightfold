@@ -20,6 +20,25 @@ const BRIDGE_INTERVAL = 30;
 /** Building height variants (world units) — at least 3 silhouettes per kind. */
 const BUILDING_HEIGHTS = [1800, 3200, 5200, 7600] as const;
 
+/** A contiguous zone run in circular segment-array coordinates. */
+export interface ZoneRun {
+  /** Array position of the first segment at the zone entrance. */
+  start: number;
+  /** Array position of the last segment at the zone exit. */
+  end: number;
+  /** True when the run continues from the array end back to index 0. */
+  wraps: boolean;
+  /** Number of segments in the run, including both boundaries. */
+  length: number;
+}
+
+export interface ZoneRunDistances {
+  /** Number of segments travelled from the run entrance. */
+  entryDist: number;
+  /** Number of segments remaining until the run exit segment. */
+  exitDist: number;
+}
+
 function guardrailInterval(zone: RoadZone): number {
   return zone === "elevated" ? ELEVATED_GUARDRAIL_INTERVAL : GUARDRAIL_INTERVAL;
 }
@@ -36,8 +55,22 @@ export function attachScenery(segments: RoadSegment[], seed: number): void {
   const tunnelRuns = findZoneRuns(segments, "tunnel");
   const riverRuns = findZoneRuns(segments, "riverside");
 
-  for (const seg of segments) {
+  for (let position = 0; position < segments.length; position++) {
+    const seg = segments[position];
+    if (!seg) continue;
     const objects: SceneryObject[] = [];
+    const tunnelRun = seg.zone === "tunnel"
+      ? findRunForIndex(tunnelRuns, position, segments.length)
+      : undefined;
+    const riverRun = seg.zone === "riverside"
+      ? findRunForIndex(riverRuns, position, segments.length)
+      : undefined;
+    const zoneRun = tunnelRun ?? riverRun;
+    const zoneDistances = zoneRun
+      ? getZoneRunDistances(zoneRun, position, segments.length)
+      : undefined;
+    const atZoneBoundary = zoneDistances !== undefined &&
+      (zoneDistances.entryDist === 0 || zoneDistances.exitDist === 0);
 
     // Guardrail support posts: every guardrailInterval segments, both
     // sides. Tunnel walls and the river bank replace them where the
@@ -54,32 +87,40 @@ export function attachScenery(segments: RoadSegment[], seed: number): void {
     // Streetlight: one per STREETLIGHT_INTERVAL segments, alternating
     // sides. Inside tunnels the frames carry the warm lights instead.
     if (seg.zone !== "tunnel" && seg.index % STREETLIGHT_INTERVAL === 0) {
-      const side = seg.index % (STREETLIGHT_INTERVAL * 2) < STREETLIGHT_INTERVAL
-        ? "left"
-        : "right";
+      // The river occupies the left bank, so riverside lights stay on the
+      // dry right bank instead of alternating into the water.
+      const side = seg.zone === "riverside"
+        ? "right"
+        : seg.index % (STREETLIGHT_INTERVAL * 2) < STREETLIGHT_INTERVAL
+          ? "left"
+          : "right";
       objects.push(makeObject(seg.index, "streetlight", side, rng));
     }
 
     // Tunnel: every segment carries one mask/frame object; entryDist and
     // exitDist (in segments) drive the fade so entering and leaving the
     // tunnel never snaps the whole screen dark or bright in one frame.
-    if (seg.zone === "tunnel") {
-      const run = findRunForIndex(tunnelRuns, seg.index);
-      if (run) {
-        objects.push(makeTunnelFrame(seg.index, run[0], run[1]));
-      }
+    if (seg.zone === "tunnel" && tunnelRun) {
+      objects.push(makeTunnelFrame(seg.index, tunnelRun, position, segments.length));
     }
 
     // Riverside: the river hugs the left bank for the whole run, with
     // the same seam fades as the tunnel; a rare bridge silhouette
     // crosses it (plan §12.4).
-    if (seg.zone === "riverside") {
-      const run = findRunForIndex(riverRuns, seg.index);
-      if (run) {
-        objects.push(makeRiver(seg.index, run[0], run[1]));
-        if (seg.index % BRIDGE_INTERVAL === 0) {
-          objects.push(makeBridge(seg.index));
-        }
+    if (seg.zone === "riverside" && riverRun) {
+      objects.push(makeRiver(seg.index, riverRun, position, segments.length));
+      if (seg.index % BRIDGE_INTERVAL === 0) {
+        objects.push(makeBridge(seg.index));
+      }
+    }
+
+    // Keep a support post at each zone mouth while the replacement scenery
+    // is still at zero fade. If a bridge uses the third slot, keep at least
+    // one transition post without exceeding the per-segment object budget.
+    if (atZoneBoundary && (seg.zone === "tunnel" || seg.zone === "riverside")) {
+      for (const side of ["left", "right"] as const) {
+        if (objects.length >= 3) break;
+        objects.push(makeObject(seg.index, "guardrail", side, rng));
       }
     }
 
@@ -126,41 +167,85 @@ function makeCityBuilding(
 }
 
 /**
- * Consecutive [startIndex, endIndex] runs of segments in `zone`, used to
- * compute fade distances for zone-spanning scenery. A run that wraps the
- * loop boundary (first and last segments both in zone) is merged so the
- * fade stays continuous across the seam.
+ * Consecutive runs of segments in `zone`, used to compute fade distances for
+ * zone-spanning scenery. A run that wraps the loop boundary is represented
+ * explicitly instead of as an impossible start > end interval.
  */
-function findZoneRuns(segments: RoadSegment[], zone: RoadZone): Array<[number, number]> {
-  const runs: Array<[number, number]> = [];
+export function findZoneRuns(segments: RoadSegment[], zone: RoadZone): ZoneRun[] {
+  const linearRuns: ZoneRun[] = [];
   let start = -1;
   for (let i = 0; i <= segments.length; i++) {
     const inZone = i < segments.length && segments[i]?.zone === zone;
     if (inZone && start < 0) start = i;
     if (!inZone && start >= 0) {
-      runs.push([start, i - 1]);
+      linearRuns.push({
+        start,
+        end: i - 1,
+        wraps: false,
+        length: i - start,
+      });
       start = -1;
     }
   }
-  const first = runs[0];
-  const last = runs[runs.length - 1];
-  if (first && last && first !== last && first[0] === 0 && last[1] === segments.length - 1) {
-    runs[0] = [last[0], first[1]];
-    runs.pop();
+
+  if (linearRuns.length < 2) return linearRuns;
+
+  const first = linearRuns[0];
+  const last = linearRuns[linearRuns.length - 1];
+  if (first?.start === 0 && last?.end === segments.length - 1) {
+    const wrapped: ZoneRun = {
+      start: last.start,
+      end: first.end,
+      wraps: true,
+      length: last.length + first.length,
+    };
+    return [wrapped, ...linearRuns.slice(1, -1)];
   }
-  return runs;
+  return linearRuns;
 }
 
-function findRunForIndex(runs: Array<[number, number]>, index: number): [number, number] | undefined {
-  return runs.find(([start, end]) => index >= start && index <= end);
+export function findRunForIndex(
+  runs: ZoneRun[],
+  index: number,
+  segmentCount: number,
+): ZoneRun | undefined {
+  if (segmentCount <= 0) return undefined;
+  const normalized = ((index % segmentCount) + segmentCount) % segmentCount;
+  return runs.find((run) => run.wraps
+    ? normalized >= run.start || normalized <= run.end
+    : normalized >= run.start && normalized <= run.end);
+}
+
+/** Return circular distances for a segment known to belong to `run`. */
+export function getZoneRunDistances(
+  run: ZoneRun,
+  index: number,
+  segmentCount: number,
+): ZoneRunDistances | undefined {
+  const matched = findRunForIndex([run], index, segmentCount);
+  if (!matched) return undefined;
+
+  const normalized = ((index % segmentCount) + segmentCount) % segmentCount;
+  const entryDist = run.wraps
+    ? normalized >= run.start
+      ? normalized - run.start
+      : segmentCount - run.start + normalized
+    : normalized - run.start;
+  return {
+    entryDist,
+    exitDist: run.length - 1 - entryDist,
+  };
 }
 
 /** One tunnel segment's wall/ceiling mask plus structural frame slot. */
 function makeTunnelFrame(
   segmentIndex: number,
-  runStart: number,
-  runEnd: number,
+  run: ZoneRun,
+  position: number,
+  segmentCount: number,
 ): SceneryObject {
+  const distances = getZoneRunDistances(run, position, segmentCount);
+  if (!distances) throw new Error(`segment ${position} is outside tunnel run`);
   return {
     id: `s${segmentIndex}-tunnel-frame`,
     kind: "tunnel-frame",
@@ -170,17 +255,20 @@ function makeTunnelFrame(
     width: 400,
     height: 2600,
     colorVariant: 0,
-    entryDist: segmentIndex - runStart,
-    exitDist: runEnd - segmentIndex,
+    entryDist: distances.entryDist,
+    exitDist: distances.exitDist,
   };
 }
 
 /** The dark river surface on the left bank (plan §12.4). */
 function makeRiver(
   segmentIndex: number,
-  runStart: number,
-  runEnd: number,
+  run: ZoneRun,
+  position: number,
+  segmentCount: number,
 ): SceneryObject {
+  const distances = getZoneRunDistances(run, position, segmentCount);
+  if (!distances) throw new Error(`segment ${position} is outside riverside run`);
   // The bank (inner edge = offset - width/2) sits just outside the
   // shoulder; the river then stretches away from the road.
   const bank = gameConfig.roadHalfWidth * 1.5;
@@ -194,8 +282,8 @@ function makeRiver(
     width,
     height: 0,
     colorVariant: 0,
-    entryDist: segmentIndex - runStart,
-    exitDist: runEnd - segmentIndex,
+    entryDist: distances.entryDist,
+    exitDist: distances.exitDist,
   };
 }
 

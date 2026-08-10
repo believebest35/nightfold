@@ -1,6 +1,6 @@
 import type { ProjectedSegment } from "./projected-segment.ts";
 import { projectWorldPoint, type ProjectionParams } from "./projection.ts";
-import type { ScreenPoint } from "../model/types.ts";
+import type { RoadZone, ScreenPoint } from "../model/types.ts";
 import { gameConfig } from "../config/game-config.ts";
 import { palette } from "../config/palette.ts";
 
@@ -49,6 +49,7 @@ export function renderRoadSegment(
   params: ProjectionParams,
   debug: boolean,
   clip: RoadClipState,
+  replacementFade = 0,
 ): SegmentVisibility {
   const { near, far } = ps;
   const screenHeight = params.screenHeight;
@@ -101,10 +102,9 @@ export function renderRoadSegment(
   );
 
   // 3. Guardrail ribbon along both road edges, just outside the shoulder.
-  // Tunnel walls replace the rails inside tunnels (plan §12.3).
-  if (ps.seg.zone !== "tunnel") {
-    drawGuardrailRibbon(ctx, ps, params, clipTopY, clipBottomY);
-  }
+  // Tunnel walls and river banks replace the rails progressively at the
+  // zone seams instead of leaving a one-segment visual hole.
+  drawGuardrailRibbon(ctx, ps, params, clipTopY, clipBottomY, replacementFade);
 
   // 4. Line details only on near segments — far away they would
   // render as constant-width bright specks (plan §12.5: far = fewer details).
@@ -189,6 +189,18 @@ export interface GuardrailRibbonFace {
   nearTop: RibbonVertex;
 }
 
+/** Visibility of one continuous rail while replacement scenery fades in. */
+export function guardrailSideVisibility(
+  zone: RoadZone,
+  replacementFade: number,
+  side: -1 | 1,
+): number {
+  const fade = Math.min(Math.max(replacementFade, 0), 1);
+  if (zone === "tunnel") return 1 - fade;
+  if (zone === "riverside" && side === -1) return 1 - fade;
+  return 1;
+}
+
 /**
  * Project the guardrail ribbon corners for one side. The near edge uses
  * the segment's start height and the far edge its end height, so the
@@ -263,15 +275,21 @@ function drawGuardrailRibbon(
   params: ProjectionParams,
   clipTopY: number,
   clipBottomY: number,
+  replacementFade: number,
 ): void {
-  // Riverside keeps only the rail on the non-river bank (side +1);
-  // the tunnel has no rails at all (walls replace them).
-  const sides: Array<-1 | 1> = ps.seg.zone === "riverside" ? [1] : [-1, 1];
+  // During the seam, both sides remain present until the replacement
+  // scenery has become visible. Riverside eventually keeps only the dry
+  // right-side rail; tunnel walls eventually replace both rails.
+  const sides: Array<-1 | 1> = [-1, 1];
   for (const side of sides) {
+    const alpha = guardrailSideVisibility(ps.seg.zone, replacementFade, side);
+    if (alpha <= 0) continue;
     const g = guardrailRibbonGeometry(ps, params, side);
     const face = guardrailRibbonFace(g, side, clipTopY, clipBottomY);
     if (!face) continue;
 
+    ctx.save();
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = palette.guardrail;
     ctx.beginPath();
     ctx.moveTo(face.nearBottom.x, face.nearBottom.y);
@@ -280,6 +298,7 @@ function drawGuardrailRibbon(
     ctx.lineTo(face.nearTop.x, face.nearTop.y);
     ctx.closePath();
     ctx.fill();
+    ctx.restore();
   }
 }
 

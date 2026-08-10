@@ -1,11 +1,21 @@
-import type { RoadSegment, RenderContext } from "../model/types.ts";
+import type { RoadSegment, RoadZone, RenderContext } from "../model/types.ts";
 import {
   computeCameraDepth,
   type ProjectionParams,
 } from "./projection.ts";
-import { projectSegmentsAhead, type ProjectInput } from "./projected-segment.ts";
+import {
+  projectSegmentsAhead,
+  type ProjectedSegment,
+  type ProjectInput,
+} from "./projected-segment.ts";
 import { createRoadClipState, renderRoadSegment } from "./road-renderer.ts";
-import { renderSceneryForSegment } from "./scenery-renderer.ts";
+import {
+  renderSceneryForSegment,
+  renderTunnelEnvironment,
+  renderTunnelFrameDetailsForSegment,
+  tunnelEnvironmentFade,
+  tunnelFade,
+} from "./scenery-renderer.ts";
 import { renderVehicle } from "./vehicle-renderer.ts";
 import { SkyRenderer } from "./sky-renderer.ts";
 import { gameConfig } from "../config/game-config.ts";
@@ -14,6 +24,12 @@ import { palette } from "../config/palette.ts";
 export interface RenderState {
   cameraY: number;
   cameraZ: number;
+  cameraZone?: RoadZone;
+  /** Zone-run distances for the segment containing the camera. */
+  cameraZoneEntryDist?: number;
+  cameraZoneExitDist?: number;
+  /** Fractional position inside the current segment, in [0, 1]. */
+  cameraSegmentProgress?: number;
   /** Normalized player lateral position, road edges at ±1. */
   playerX: number;
   /** Road direction derivative at the camera (dx), for curve rendering. */
@@ -73,20 +89,49 @@ export function renderFrame(
 
   const projected = projectSegmentsAhead(segments, projParams, projInput);
   const clip = createRoadClipState();
+  const visibleSegments: Array<{ ps: ProjectedSegment; clipTopY: number }> = [];
   for (let i = projected.length - 1; i >= 0; i--) {
     const ps = projected[i];
     if (!ps) continue;
     // The road pass reports the segment's visibility and clip band;
     // scenery only draws for visible segments and truncates object
     // bases at the hill crest (no ground-level objects through terrain).
-    const vis = renderRoadSegment(ctx, ps, projParams, state.debug, clip);
+    const replacementFade = zoneReplacementFade(ps);
+    const vis = renderRoadSegment(ctx, ps, projParams, state.debug, clip, replacementFade);
     if (vis.visible) {
       renderSceneryForSegment(ctx, ps, projParams, vis.clipTopY);
+      visibleSegments.push({ ps, clipTopY: vis.clipTopY });
     }
+  }
+
+  // The environment darkness is camera-driven and composited once. It is
+  // intentionally after the road/local walls so the road becomes darker,
+  // then tunnel lamps and beams are redrawn above it in a detail pass.
+  const environmentFade = tunnelEnvironmentFade(
+    state.cameraZone ?? "city",
+    state.cameraZoneEntryDist,
+    state.cameraZoneExitDist,
+    state.cameraSegmentProgress ?? 0,
+  );
+  renderTunnelEnvironment(ctx, projParams, environmentFade);
+  for (const visible of visibleSegments) {
+    renderTunnelFrameDetailsForSegment(
+      ctx,
+      visible.ps,
+      projParams,
+      visible.clipTopY,
+    );
   }
 
   // 4. Player vehicle anchor
   renderVehicle(ctx, width, height, state.playerX);
+}
+
+function zoneReplacementFade(ps: ProjectedSegment): number {
+  const zoneObject = ps.seg.scenery.find((obj) =>
+    obj.kind === "tunnel-frame" || obj.kind === "river",
+  );
+  return zoneObject ? tunnelFade(zoneObject) : 0;
 }
 
 function drawGround(ctx: CanvasRenderingContext2D, width: number, height: number): void {

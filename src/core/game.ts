@@ -143,6 +143,25 @@ export class Game {
       gameConfig.drawDistance,
     );
 
+    const playerSegment = findSegmentAtZ(
+      this.road.segments,
+      this.road.totalLength,
+      this.gameState.positionZ,
+    );
+    const segmentLength = gameConfig.segmentLength;
+    const segmentProgress = playerSegment
+      ? Math.min(
+        Math.max(
+          (this.gameState.positionZ - playerSegment.p1.world.worldZ) / segmentLength,
+          0,
+        ),
+        1,
+      )
+      : 0;
+    const zoneObject = playerSegment?.scenery.find((obj) =>
+      obj.kind === "tunnel-frame" || obj.kind === "river",
+    );
+
     const roadY = getRoadYAtZ(
       this.road.segments,
       this.road.totalLength,
@@ -158,6 +177,10 @@ export class Game {
     const renderState: RenderState = {
       cameraY: roadY + gameConfig.cameraHeight,
       cameraZ: this.gameState.positionZ,
+      cameraZone: playerSegment?.zone ?? "city",
+      cameraZoneEntryDist: zoneObject?.entryDist,
+      cameraZoneExitDist: zoneObject?.exitDist,
+      cameraSegmentProgress: segmentProgress,
       playerX: this.gameState.playerX,
       roadOffsetRate: roadState.offsetRate,
       totalLength: this.road.totalLength,
