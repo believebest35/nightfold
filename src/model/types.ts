@@ -54,6 +54,8 @@ export interface SceneryObject {
    */
   entryDist?: number;
   exitDist?: number;
+  /** True when this object belongs to a zone covering the whole loop. */
+  closedRun?: boolean;
 }
 
 export interface InputState {

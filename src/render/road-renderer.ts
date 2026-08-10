@@ -10,6 +10,9 @@ const LANE_MARKER_WIDTH_FACTOR = 0.05;
 /** Guardrail ribbon: world offset from road center and ribbon height. */
 const RAIL_OFFSET = gameConfig.roadHalfWidth * 1.4 + 50;
 const RAIL_HEIGHT = 250;
+const SUPPORT_POST_HEIGHT = 400;
+const GUARDRAIL_INTERVAL = 4;
+const ELEVATED_GUARDRAIL_INTERVAL = 8;
 /** Ribbon half-width in world units. */
 const RAIL_HALF_WIDTH = 25;
 
@@ -202,6 +205,24 @@ export function guardrailSideVisibility(
 }
 
 /**
+ * Transition support posts are road geometry rather than scenery objects.
+ * This keeps their normal cadence without competing with river/bridge/light
+ * objects for the three-object scenery budget.
+ */
+export function guardrailSupportPostVisible(
+  zone: RoadZone,
+  replacementFade: number,
+  side: -1 | 1,
+  segmentIndex: number,
+): boolean {
+  const interval = zone === "elevated" ? ELEVATED_GUARDRAIL_INTERVAL : GUARDRAIL_INTERVAL;
+  if (segmentIndex % interval !== 0) return false;
+  if (zone === "tunnel") return replacementFade < 1;
+  if (zone === "riverside") return side === 1 || replacementFade < 1;
+  return false;
+}
+
+/**
  * Project the guardrail ribbon corners for one side. The near edge uses
  * the segment's start height and the far edge its end height, so the
  * rail follows slopes instead of floating above or digging into them.
@@ -299,7 +320,50 @@ function drawGuardrailRibbon(
     ctx.closePath();
     ctx.fill();
     ctx.restore();
+
+    if (guardrailSupportPostVisible(ps.seg.zone, replacementFade, side, ps.seg.index)) {
+      drawTransitionSupportPost(
+        ctx,
+        ps,
+        params,
+        clipTopY,
+        clipBottomY,
+        side,
+        alpha,
+      );
+    }
   }
+}
+
+function drawTransitionSupportPost(
+  ctx: CanvasRenderingContext2D,
+  ps: ProjectedSegment,
+  params: ProjectionParams,
+  clipTopY: number,
+  clipBottomY: number,
+  side: -1 | 1,
+  alpha: number,
+): void {
+  const groundY = ps.seg.p1.world.worldY;
+  const worldX = ps.centerOffsetNear + side * RAIL_OFFSET;
+  const base = projectWorldPoint(
+    { worldX, worldY: groundY, worldZ: ps.zBase },
+    { ...params, roadHalfWidth: RAIL_HALF_WIDTH },
+  );
+  const top = projectWorldPoint(
+    { worldX, worldY: groundY + SUPPORT_POST_HEIGHT, worldZ: ps.zBase },
+    { ...params, roadHalfWidth: RAIL_HALF_WIDTH * 0.8 },
+  );
+  const bottomY = Math.min(Math.max(base.y, clipTopY), clipBottomY);
+  const topY = Math.max(Math.min(top.y, clipBottomY), clipTopY);
+  if (topY >= bottomY) return;
+
+  const width = Math.max(base.halfWidth * 0.32, 1.5);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = palette.guardrail;
+  ctx.fillRect(base.x - width / 2, topY, width, bottomY - topY);
+  ctx.restore();
 }
 
 function drawTrapezoid(

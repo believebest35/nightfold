@@ -2,16 +2,23 @@ import { describe, expect, it } from "vitest";
 import { gameConfig } from "../config/game-config.ts";
 import type { RoadSegment, RenderContext } from "../model/types.ts";
 import { renderFrame, type RenderState } from "../render/renderer.ts";
-import { tunnelEnvironmentFade } from "../render/scenery-renderer.ts";
+import {
+  tunnelApertureGeometry,
+  tunnelEnvironmentFade,
+} from "../render/scenery-renderer.ts";
 import type { SkyRenderer } from "../render/sky-renderer.ts";
 
 interface RecordingCanvas {
   ctx: CanvasRenderingContext2D;
   fillRects: Array<[number, number, number, number]>;
+  fills: Array<{ fillStyle: unknown; globalAlpha: number }>;
+  clipCount: number;
 }
 
 function makeRecordingCanvas(): RecordingCanvas {
   const fillRects: Array<[number, number, number, number]> = [];
+  const fills: Array<{ fillStyle: unknown; globalAlpha: number }> = [];
+  let clipCount = 0;
   const gradient = { addColorStop: () => undefined } as unknown as CanvasGradient;
   const context = {
     fillRects,
@@ -30,12 +37,24 @@ function makeRecordingCanvas(): RecordingCanvas {
     closePath: () => undefined,
     moveTo: () => undefined,
     lineTo: () => undefined,
-    fill: () => undefined,
+    fill: () => {
+      fills.push({ fillStyle: context.fillStyle, globalAlpha: context.globalAlpha });
+    },
     stroke: () => undefined,
     arc: () => undefined,
     roundRect: () => undefined,
+    clip: () => {
+      clipCount++;
+    },
   } as unknown as CanvasRenderingContext2D & { fillRects: typeof fillRects };
-  return { ctx: context, fillRects };
+  return {
+    ctx: context,
+    fillRects,
+    fills,
+    get clipCount() {
+      return clipCount;
+    },
+  };
 }
 
 function tunnelSegments(count: number): RoadSegment[] {
@@ -102,8 +121,8 @@ function makeState(overrides: Partial<RenderState> = {}): RenderState {
 const silentSky = { render: () => undefined } as unknown as SkyRenderer;
 
 function countFullScreenMasks(canvas: RecordingCanvas): number {
-  return canvas.fillRects.filter(([x, y, width, height]) =>
-    x === 0 && y === 0 && width === 320 && height === 180,
+  return canvas.fills.filter(({ fillStyle }) =>
+    typeof fillStyle === "string" && fillStyle.startsWith("rgba(0,0,0,"),
   ).length;
 }
 
@@ -143,5 +162,42 @@ describe("frame-level tunnel environment", () => {
     expect(tunnelEnvironmentFade("tunnel", 0, 40, 0)).toBe(0);
     expect(tunnelEnvironmentFade("tunnel", 20, 20, 0.5)).toBe(1);
     expect(tunnelEnvironmentFade("tunnel", 40, 0, 1)).toBe(0);
+  });
+
+  it("shrinks the aperture toward a bright exit while keeping a real roof geometry", () => {
+    const params = {
+      cameraX: 0,
+      cameraY: gameConfig.cameraHeight,
+      cameraZ: 0,
+      cameraDepth: 1,
+      screenWidth: 320,
+      screenHeight: 180,
+      roadHalfWidth: gameConfig.roadHalfWidth,
+    };
+    const inside = tunnelApertureGeometry(params, 1);
+    const exit = tunnelApertureGeometry(params, 0.25);
+    expect(inside.topY).toBe(0);
+    expect(inside.bottomHalfWidth).toBe(160);
+    expect(exit.topY).toBeGreaterThan(inside.topY);
+    expect(exit.bottomHalfWidth).toBeLessThan(inside.bottomHalfWidth);
+  });
+
+  it("clips the inside detail pass to the current tunnel run", () => {
+    const canvas = makeRecordingCanvas();
+    const mixed = tunnelSegments(4).map((segment, index) => ({
+      ...segment,
+      zone: index === 2 ? "city" as const : "tunnel" as const,
+      scenery: index === 2 ? [] : segment.scenery,
+    }));
+    renderFrame(
+      canvas.ctx,
+      makeRenderContext(canvas),
+      mixed,
+      makeState({ cameraZ: -1000 }),
+      silentSky,
+    );
+    // The near-to-far projected list is tunnel, tunnel, city, tunnel. Only
+    // the contiguous run ahead of the camera may be redrawn above the mask.
+    expect(canvas.clipCount).toBe(2);
   });
 });

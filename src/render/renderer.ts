@@ -89,6 +89,17 @@ export function renderFrame(
 
   const projected = projectSegmentsAhead(segments, projParams, projInput);
   const clip = createRoadClipState();
+  const cameraInsideTunnel = state.cameraZone === "tunnel";
+  const tunnelDetailSegments = new Set<ProjectedSegment>();
+  if (cameraInsideTunnel) {
+    // `projected` is near → far. Only the contiguous tunnel run immediately
+    // ahead of the camera belongs in the post-mask detail pass; a later
+    // wrapped tunnel must remain in the ordinary painter order.
+    for (const ps of projected) {
+      if (ps.seg.zone !== "tunnel") break;
+      tunnelDetailSegments.add(ps);
+    }
+  }
   const visibleSegments: Array<{ ps: ProjectedSegment; clipTopY: number }> = [];
   for (let i = projected.length - 1; i >= 0; i--) {
     const ps = projected[i];
@@ -99,7 +110,11 @@ export function renderFrame(
     const replacementFade = zoneReplacementFade(ps);
     const vis = renderRoadSegment(ctx, ps, projParams, state.debug, clip, replacementFade);
     if (vis.visible) {
-      renderSceneryForSegment(ctx, ps, projParams, vis.clipTopY);
+      renderSceneryForSegment(ctx, ps, projParams, vis.clipTopY, {
+        // Outside the tunnel, portal details stay in the normal far → near
+        // pass so a nearer building or wall can occlude them naturally.
+        drawTunnelDetails: !cameraInsideTunnel,
+      });
       visibleSegments.push({ ps, clipTopY: vis.clipTopY });
     }
   }
@@ -113,14 +128,18 @@ export function renderFrame(
     state.cameraZoneExitDist,
     state.cameraSegmentProgress ?? 0,
   );
-  renderTunnelEnvironment(ctx, projParams, environmentFade);
-  for (const visible of visibleSegments) {
-    renderTunnelFrameDetailsForSegment(
-      ctx,
-      visible.ps,
-      projParams,
-      visible.clipTopY,
-    );
+  const tunnelAperture = renderTunnelEnvironment(ctx, projParams, environmentFade);
+  if (cameraInsideTunnel) {
+    for (const visible of visibleSegments) {
+      if (!tunnelDetailSegments.has(visible.ps)) continue;
+      renderTunnelFrameDetailsForSegment(
+        ctx,
+        visible.ps,
+        projParams,
+        visible.clipTopY,
+        tunnelAperture ?? undefined,
+      );
+    }
   }
 
   // 4. Player vehicle anchor

@@ -79,19 +79,15 @@ describe("attachScenery", () => {
     }
   });
 
-  it("places guardrail support posts on both sides on the zone's cadence", () => {
+  it("keeps transition support posts out of the scenery budget", () => {
     const segments = roadWithScenery(42);
     for (const seg of segments) {
       const rails = seg.scenery.filter((o) => o.kind === "guardrail");
       if (seg.zone === "tunnel" || seg.zone === "riverside") {
-        const zoneIndices = segments
-          .filter((candidate) => candidate.zone === seg.zone)
-          .map((candidate) => candidate.index);
-        const atBoundary = seg.index === zoneIndices[0] ||
-          seg.index === zoneIndices[zoneIndices.length - 1];
-        // The first/last zone segment keeps support posts while the
-        // replacement scenery is still at zero fade.
-        expect(rails.length > 0).toBe(atBoundary);
+        // Tunnel/river transition posts are road geometry. Keeping them
+        // out of scenery leaves room for the required river, bridge, and
+        // streetlight objects on the same segment.
+        expect(rails.length).toBe(0);
         continue;
       }
       const interval = seg.zone === "elevated" ? 8 : 4;
@@ -354,10 +350,11 @@ describe("attachScenery", () => {
       expect(frame?.entryDist).toBeGreaterThanOrEqual(0);
       expect(frame?.exitDist).toBeGreaterThanOrEqual(0);
     }
-    // The seam is continuous: the last array segment and the first array
-    // segment are adjacent in the same circular run.
-    const seamBefore = tunnelFrames[1];
-    const seamAfter = tunnelFrames[2];
+    // The seam is continuous: segment 5 and segment 0 are adjacent in the
+    // circular road. Do not compare the filtered-array neighbours (segment
+    // 1 and segment 4), which are separated by the city zone.
+    const seamBefore = tunnelSegments[5]?.scenery.find((obj) => obj.kind === "tunnel-frame");
+    const seamAfter = tunnelSegments[0]?.scenery.find((obj) => obj.kind === "tunnel-frame");
     if (!seamBefore || !seamAfter) throw new Error("missing wrapped tunnel seam");
     expect(tunnelFade(seamBefore)).toBeCloseTo(tunnelFade(seamAfter));
 
@@ -373,6 +370,53 @@ describe("attachScenery", () => {
       [1, 0],
       [0, 1],
     ]);
+    const riverBefore = riverSegments[3]?.scenery.find((obj) => obj.kind === "river");
+    const riverAfter = riverSegments[0]?.scenery.find((obj) => obj.kind === "river");
+    if (!riverBefore || !riverAfter) throw new Error("missing wrapped river seam");
+    expect(tunnelFade(riverBefore)).toBeCloseTo(tunnelFade(riverAfter));
+  });
+
+  it("does not invent a bright seam when the entire loop is one zone", () => {
+    const tunnelSegments = segmentsForZones(Array.from({ length: 8 }, () => "tunnel" as const));
+    attachScenery(tunnelSegments, 42);
+    const tunnelRuns = findZoneRuns(tunnelSegments, "tunnel");
+    expect(tunnelRuns).toEqual([{
+      start: 0,
+      end: 7,
+      wraps: true,
+      length: 8,
+      closed: true,
+    }]);
+    for (const seg of tunnelSegments) {
+      const frame = seg.scenery.find((obj) => obj.kind === "tunnel-frame");
+      if (!frame) throw new Error("missing all-loop tunnel frame");
+      expect(frame.entryDist).toBeGreaterThanOrEqual(0);
+      expect(frame.exitDist).toBeGreaterThanOrEqual(0);
+      expect(tunnelFade(frame)).toBe(1);
+    }
+
+    const riverSegments = segmentsForZones(Array.from({ length: 8 }, () => "riverside" as const));
+    attachScenery(riverSegments, 42);
+    for (const seg of riverSegments) {
+      const river = seg.scenery.find((obj) => obj.kind === "river");
+      if (!river) throw new Error("missing all-loop river");
+      expect(river.entryDist).toBeGreaterThanOrEqual(0);
+      expect(river.exitDist).toBeGreaterThanOrEqual(0);
+      expect(tunnelFade(river)).toBe(1);
+    }
+  });
+
+  it("keeps river, bridge, and streetlight within the object budget", () => {
+    const segments = segmentsForZones(Array.from({ length: 31 }, () => "riverside" as const));
+    attachScenery(segments, 42);
+    for (const seg of segments) {
+      expect(seg.scenery.length).toBeLessThanOrEqual(3);
+      expect(seg.scenery.filter((obj) => obj.kind === "river")).toHaveLength(1);
+      if (seg.index % 30 === 0) {
+        expect(seg.scenery.filter((obj) => obj.kind === "bridge")).toHaveLength(1);
+        expect(seg.scenery.filter((obj) => obj.kind === "streetlight")).toHaveLength(1);
+      }
+    }
   });
 
   it("keeps riverside streetlights on the dry right bank", () => {

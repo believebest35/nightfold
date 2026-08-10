@@ -30,6 +30,8 @@ export interface ZoneRun {
   wraps: boolean;
   /** Number of segments in the run, including both boundaries. */
   length: number;
+  /** True when the whole circular road belongs to this zone. */
+  closed?: boolean;
 }
 
 export interface ZoneRunDistances {
@@ -65,16 +67,11 @@ export function attachScenery(segments: RoadSegment[], seed: number): void {
     const riverRun = seg.zone === "riverside"
       ? findRunForIndex(riverRuns, position, segments.length)
       : undefined;
-    const zoneRun = tunnelRun ?? riverRun;
-    const zoneDistances = zoneRun
-      ? getZoneRunDistances(zoneRun, position, segments.length)
-      : undefined;
-    const atZoneBoundary = zoneDistances !== undefined &&
-      (zoneDistances.entryDist === 0 || zoneDistances.exitDist === 0);
-
     // Guardrail support posts: every guardrailInterval segments, both
     // sides. Tunnel walls and the river bank replace them where the
-    // road runs inside or beside water.
+    // road runs inside or beside water. Transition posts are rendered as
+    // road geometry so they keep this cadence without consuming a scenery
+    // object slot alongside a river, bridge, or streetlight.
     if (
       seg.zone !== "tunnel" &&
       seg.zone !== "riverside" &&
@@ -111,16 +108,6 @@ export function attachScenery(segments: RoadSegment[], seed: number): void {
       objects.push(makeRiver(seg.index, riverRun, position, segments.length));
       if (seg.index % BRIDGE_INTERVAL === 0) {
         objects.push(makeBridge(seg.index));
-      }
-    }
-
-    // Keep a support post at each zone mouth while the replacement scenery
-    // is still at zero fade. If a bridge uses the third slot, keep at least
-    // one transition post without exceeding the per-segment object budget.
-    if (atZoneBoundary && (seg.zone === "tunnel" || seg.zone === "riverside")) {
-      for (const side of ["left", "right"] as const) {
-        if (objects.length >= 3) break;
-        objects.push(makeObject(seg.index, "guardrail", side, rng));
       }
     }
 
@@ -188,6 +175,20 @@ export function findZoneRuns(segments: RoadSegment[], zone: RoadZone): ZoneRun[]
     }
   }
 
+  if (linearRuns.length === 1) {
+    const only = linearRuns[0];
+    if (only?.start === 0 && only.end === segments.length - 1) {
+      // There is no entrance or exit on an all-zone loop. Treat it as a
+      // closed run so the array boundary cannot create a fake bright seam.
+      return [{
+        start: 0,
+        end: segments.length - 1,
+        wraps: true,
+        length: segments.length,
+        closed: true,
+      }];
+    }
+  }
   if (linearRuns.length < 2) return linearRuns;
 
   const first = linearRuns[0];
@@ -225,6 +226,10 @@ export function getZoneRunDistances(
   const matched = findRunForIndex([run], index, segmentCount);
   if (!matched) return undefined;
 
+  if (run.closed) {
+    return { entryDist: run.length, exitDist: run.length };
+  }
+
   const normalized = ((index % segmentCount) + segmentCount) % segmentCount;
   const entryDist = run.wraps
     ? normalized >= run.start
@@ -257,6 +262,7 @@ function makeTunnelFrame(
     colorVariant: 0,
     entryDist: distances.entryDist,
     exitDist: distances.exitDist,
+    closedRun: run.closed,
   };
 }
 
@@ -284,6 +290,7 @@ function makeRiver(
     colorVariant: 0,
     entryDist: distances.entryDist,
     exitDist: distances.exitDist,
+    closedRun: run.closed,
   };
 }
 

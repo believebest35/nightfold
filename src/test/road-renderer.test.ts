@@ -3,6 +3,7 @@ import {
   guardrailRibbonFace,
   guardrailRibbonGeometry,
   guardrailSideVisibility,
+  guardrailSupportPostVisible,
 } from "../render/road-renderer.ts";
 import { projectWorldPoint, type ProjectionParams } from "../render/projection.ts";
 import type { ProjectedSegment } from "../render/projected-segment.ts";
@@ -136,5 +137,22 @@ describe("guardrailSideVisibility", () => {
     expect(guardrailSideVisibility("riverside", 0.5, -1)).toBe(0.5);
     expect(guardrailSideVisibility("riverside", 1, -1)).toBe(0);
     expect(guardrailSideVisibility("riverside", 1, 1)).toBe(1);
+  });
+});
+
+describe("guardrail transition support posts", () => {
+  it("keeps posts on the ribbon cadence and fades them with tunnel rails", () => {
+    expect(guardrailSupportPostVisible("tunnel", 0, -1, 264)).toBe(true);
+    expect(guardrailSupportPostVisible("tunnel", 0, 1, 264)).toBe(true);
+    expect(guardrailSupportPostVisible("tunnel", 0, -1, 265)).toBe(false);
+    expect(guardrailSupportPostVisible("tunnel", 1, -1, 264)).toBe(false);
+    expect(guardrailSupportPostVisible("tunnel", 1, 1, 264)).toBe(false);
+  });
+
+  it("fades only river-side posts while dry-side posts stay on cadence", () => {
+    expect(guardrailSupportPostVisible("riverside", 0.5, -1, 276)).toBe(true);
+    expect(guardrailSupportPostVisible("riverside", 1, -1, 276)).toBe(false);
+    expect(guardrailSupportPostVisible("riverside", 1, 1, 276)).toBe(true);
+    expect(guardrailSupportPostVisible("riverside", 0.5, -1, 277)).toBe(false);
   });
 });
