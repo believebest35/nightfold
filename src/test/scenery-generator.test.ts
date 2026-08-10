@@ -51,11 +51,12 @@ describe("attachScenery", () => {
     }
   });
 
-  it("places guardrail support posts on both sides every 4 segments", () => {
+  it("places guardrail support posts on both sides on the zone's cadence", () => {
     const segments = roadWithScenery(42);
     for (const seg of segments) {
+      const interval = seg.zone === "elevated" ? 8 : 4;
       const rails = seg.scenery.filter((o) => o.kind === "guardrail");
-      if (seg.index % 4 === 0) {
+      if (seg.index % interval === 0) {
         expect(rails.filter((r) => r.side === "left").length).toBe(1);
         expect(rails.filter((r) => r.side === "right").length).toBe(1);
       } else {
@@ -64,14 +65,52 @@ describe("attachScenery", () => {
     }
   });
 
-  it("generates buildings only on city segments, at most one per segment", () => {
+  it("generates buildings only on city and elevated segments, at most one per segment", () => {
     const segments = roadWithScenery(42);
     for (const seg of segments) {
       const buildings = seg.scenery.filter((o) => o.kind === "building");
       if (buildings.length > 0) {
-        expect(seg.zone).toBe("city");
+        expect(seg.zone === "city" || seg.zone === "elevated").toBe(true);
       }
       expect(buildings.length).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("gives elevated segments a low, sparse, far building layer", () => {
+    const segments = roadWithScenery(42);
+    let elevatedBuildings = 0;
+    let cityBuildings = 0;
+    for (const seg of segments) {
+      for (const o of seg.scenery) {
+        if (o.kind !== "building") continue;
+        if (seg.zone === "elevated") {
+          elevatedBuildings++;
+          // Low layer: noticeably shorter than city towers (max 1800
+          // vs. city's 1500–7900) and always the far silhouette color.
+          expect(o.height).toBeLessThanOrEqual(1800);
+          expect(o.colorVariant).toBe(1);
+        } else if (seg.zone === "city") {
+          cityBuildings++;
+        }
+      }
+    }
+    expect(elevatedBuildings).toBeGreaterThan(0);
+    // Sparser than the city's towers, per segment.
+    const elevatedSegs = segments.filter((s) => s.zone === "elevated").length;
+    const citySegs = segments.filter((s) => s.zone === "city").length;
+    expect(elevatedBuildings / elevatedSegs).toBeLessThan(
+      cityBuildings / citySegs,
+    );
+  });
+
+  it("keeps elevated buildings clear of the shoulder", () => {
+    const segments = roadWithScenery(42);
+    for (const seg of segments) {
+      for (const o of seg.scenery) {
+        if (o.kind !== "building" || seg.zone !== "elevated") continue;
+        const innerEdge = o.offset - o.width / 2;
+        expect(innerEdge).toBeGreaterThanOrEqual(SHOULDER_HALF_WIDTH + 100);
+      }
     }
   });
 
