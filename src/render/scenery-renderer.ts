@@ -305,7 +305,6 @@ function renderTunnelFrame(
 
   // Side walls: from the road edges out to the screen sides, bounded by
   // the segment's clip band.
-  ctx.fillStyle = maskColor;
   ctx.beginPath();
   ctx.moveTo(0, clipTopY);
   ctx.lineTo(ps.far.x - ps.far.halfWidth, clipTopY);
