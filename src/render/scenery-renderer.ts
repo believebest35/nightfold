@@ -30,6 +30,9 @@ export const WINDOW_LIT_RATIO = 0.25;
 /** Projected tunnel opening used by the single frame-level environment pass. */
 export interface TunnelApertureGeometry {
   centerX: number;
+  nearSegmentIndex: number;
+  farSegmentIndex: number;
+  nearProgress: number;
   roofNearLeft: { x: number; y: number };
   roofNearRight: { x: number; y: number };
   roofFarLeft: { x: number; y: number };
@@ -44,6 +47,18 @@ export interface TunnelApertureGeometry {
 export interface SceneryRenderOptions {
   /** Draw tunnel beams/lights in the normal painter pass. */
   drawTunnelDetails?: boolean;
+}
+
+export interface TunnelDetailOptions {
+  /** The entrance is behind the camera once the camera is in the run. */
+  suppressEntrancePortal?: boolean;
+}
+
+export interface TunnelPortalGeometry {
+  roofLeft: { x: number; y: number };
+  roofRight: { x: number; y: number };
+  roadLeft: { x: number; y: number };
+  roadRight: { x: number; y: number };
 }
 
 const buildingNearRgb = parseHex(palette.buildingNear);
@@ -88,6 +103,7 @@ export function renderTunnelFrameDetailsForSegment(
   params: ProjectionParams,
   clipTopY: number,
   aperture?: TunnelApertureGeometry,
+  options: TunnelDetailOptions = {},
 ): void {
   if (aperture) {
     ctx.save();
@@ -95,7 +111,7 @@ export function renderTunnelFrameDetailsForSegment(
   }
   for (const obj of ps.seg.scenery) {
     if (obj.kind === "tunnel-frame") {
-      renderTunnelFrameDetails(ctx, obj, ps, params, clipTopY);
+      renderTunnelFrameDetails(ctx, obj, ps, params, clipTopY, options);
     }
   }
   if (aperture) ctx.restore();
@@ -345,37 +361,45 @@ function renderTunnelFrameDetails(
   ps: ProjectedSegment,
   params: ProjectionParams,
   clipTopY: number,
+  options: TunnelDetailOptions = {},
 ): void {
-  const isPortalDetail = isPortalDetailFrame(obj);
-  if (obj.segmentIndex % TUNNEL_FRAME_INTERVAL !== 0 && !isPortalDetail) return;
+  const entrancePortal = isEntrancePortal(obj);
+  const exitPortal = isExitPortal(obj);
+  const isPortalDetail = entrancePortal || exitPortal;
+  const drawEntrance = entrancePortal && !options.suppressEntrancePortal;
+  if (isPortalDetail) {
+    if (drawEntrance) {
+      renderTunnelPortal(ctx, ps, params, true, tunnelFade(obj));
+    }
+    if (exitPortal) {
+      renderTunnelPortal(ctx, ps, params, false, tunnelFade(obj));
+    }
+    return;
+  }
+  if (obj.segmentIndex % TUNNEL_FRAME_INTERVAL !== 0) return;
   const fade = tunnelFade(obj);
-  const structureAlpha = Math.max(0.3, fade, isPortalDetail ? 0.55 : 0);
-  const portalRoofLeft = isPortalDetail
-    ? projectTunnelRoofPoint(ps, params, false, -1)
-    : undefined;
-  const portalRoofRight = isPortalDetail
-    ? projectTunnelRoofPoint(ps, params, false, 1)
-    : undefined;
-  const beamY = portalRoofLeft?.y ?? clipTopY;
-  const beamLeftX = portalRoofLeft?.x ?? ps.far.x - ps.far.halfWidth;
-  const beamRightX = portalRoofRight?.x ?? ps.far.x + ps.far.halfWidth;
+  const structureAlpha = Math.max(0.3, fade);
+  const ribLeft = projectTunnelRoofPoint(ps, params, false, -1);
+  const ribRight = projectTunnelRoofPoint(ps, params, false, 1);
+  if (ribLeft.y >= clipTopY) return;
+  const beamY = ribLeft.y;
+  const beamLeftX = ribLeft.x;
+  const beamRightX = ribRight.x;
 
   // Crossbeam at the far edge of the segment.
   ctx.save();
   ctx.globalAlpha = structureAlpha;
-  ctx.strokeStyle = isPortalDetail
-    ? colorRgba(parseHex(palette.guardrail), 0.86)
-    : mixWithFog(parseHex(palette.tunnelFrame), segmentFog(ps, params));
-  ctx.lineWidth = isPortalDetail ? 4 : 3;
+  ctx.strokeStyle = mixWithFog(parseHex(palette.tunnelFrame), segmentFog(ps, params));
+  ctx.lineWidth = 3;
   ctx.beginPath();
   ctx.moveTo(beamLeftX, beamY);
-  ctx.lineTo(beamRightX, portalRoofRight?.y ?? beamY);
+  ctx.lineTo(beamRightX, ribRight.y);
   ctx.stroke();
 
   // Warm lamp at the crossbeam center.
   ctx.fillStyle = colorRgba(
     parseHex(palette.windowWarm),
-    isPortalDetail ? 0.92 : 0.35 + structureAlpha * 0.55,
+    0.35 + structureAlpha * 0.55,
   );
   const lampW = Math.max(ps.far.halfWidth * 0.16, 2);
   ctx.fillRect(ps.far.x - lampW / 2, beamY - 3, lampW, 3);
@@ -383,16 +407,88 @@ function renderTunnelFrameDetails(
   ctx.restore();
 }
 
-/** Keep one projected frame visible on either side of a zone seam. */
-function isPortalFrame(obj: SceneryObject): boolean {
-  return (obj.entryDist ?? Infinity) <= 1 || (obj.exitDist ?? Infinity) <= 1;
+function renderTunnelPortal(
+  ctx: CanvasRenderingContext2D,
+  ps: ProjectedSegment,
+  params: ProjectionParams,
+  nearEdge: boolean,
+  fade: number,
+): void {
+  const { roofLeft, roofRight, roadLeft, roadRight } = tunnelPortalGeometry(
+    ps,
+    params,
+    nearEdge,
+  );
+  const alpha = Math.max(0.55, fade);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Only the entrance gets a dark mouth surface. The exit remains open so
+  // the already-rendered road, buildings and sky behind it stay visible.
+  if (nearEdge) {
+    ctx.fillStyle = colorRgba(parseHex(palette.tunnelInterior), 0.72);
+    ctx.beginPath();
+    ctx.moveTo(roofLeft.x, roofLeft.y);
+    ctx.lineTo(roofRight.x, roofRight.y);
+    ctx.lineTo(roadRight.x, roadRight.y);
+    ctx.lineTo(roadLeft.x, roadLeft.y);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Do not leave a beam floating across the entire viewport when both
+  // physical supports are behind the screen edges. The entrance mouth above
+  // remains visible as a distant dark opening; the frame returns once a
+  // support has a real screen intersection.
+  const supportVisible = (x: number): boolean => x >= 0 && x <= params.screenWidth;
+  if (!supportVisible(roofLeft.x) && !supportVisible(roadLeft.x) &&
+      !supportVisible(roofRight.x) && !supportVisible(roadRight.x)) {
+    ctx.restore();
+    return;
+  }
+
+  ctx.strokeStyle = colorRgba(parseHex(palette.guardrail), 0.9);
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(roofLeft.x, roofLeft.y);
+  ctx.lineTo(roofRight.x, roofRight.y);
+  ctx.moveTo(roofLeft.x, roofLeft.y);
+  ctx.lineTo(roadLeft.x, roadLeft.y);
+  ctx.moveTo(roofRight.x, roofRight.y);
+  ctx.lineTo(roadRight.x, roadRight.y);
+  ctx.stroke();
+
+  const lamp = interpolatePoint(roofLeft, roofRight, 0.5);
+  if (lamp.y >= -8 && lamp.y <= params.screenHeight + 8) {
+    ctx.fillStyle = palette.windowWarm;
+    ctx.fillRect(lamp.x - 5, lamp.y - 3, 10, 5);
+  }
+  ctx.restore();
 }
 
-/** Show one projected rib at the seam's first visible frame. */
-function isPortalDetailFrame(obj: SceneryObject): boolean {
-  return isPortalFrame(obj) ||
-    obj.entryDist === TUNNEL_FRAME_INTERVAL ||
-    obj.exitDist === TUNNEL_FRAME_INTERVAL;
+/** Project the four corners of an entrance or exit portal boundary. */
+export function tunnelPortalGeometry(
+  ps: ProjectedSegment,
+  params: ProjectionParams,
+  nearEdge: boolean,
+): TunnelPortalGeometry {
+  const roofLeft = projectTunnelRoofPoint(ps, params, nearEdge, -1);
+  const roofRight = projectTunnelRoofPoint(ps, params, nearEdge, 1);
+  const road = nearEdge ? ps.near : ps.far;
+  return {
+    roofLeft,
+    roofRight,
+    roadLeft: { x: road.x - road.halfWidth, y: road.y },
+    roadRight: { x: road.x + road.halfWidth, y: road.y },
+  };
+}
+
+function isEntrancePortal(obj: SceneryObject): boolean {
+  return !obj.closedRun && obj.entryDist === 0;
+}
+
+function isExitPortal(obj: SceneryObject): boolean {
+  return !obj.closedRun && obj.exitDist === 0;
 }
 
 /**
@@ -565,6 +661,9 @@ export function tunnelApertureGeometry(
   };
   return {
     centerX: (nearSegment.near.x + farSegment.far.x) / 2,
+    nearSegmentIndex: nearSegment.seg.index,
+    farSegmentIndex: farSegment.seg.index,
+    nearProgress: nearSegment.nearProgress,
     roofNearLeft,
     roofNearRight,
     roofFarLeft,
@@ -583,13 +682,13 @@ function projectTunnelRoofPoint(
   near: boolean,
   side: -1 | 1,
 ): { x: number; y: number } {
-  const roadPoint = near ? ps.seg.p1.world : ps.seg.p2.world;
   const centerOffset = near ? ps.centerOffsetNear : ps.centerOffsetFar;
-  const worldZ = near ? ps.zBase : ps.zBase + gameConfig.segmentLength;
+  const worldY = near ? ps.nearWorldY : ps.farWorldY;
+  const worldZ = near ? ps.nearWorldZ : ps.farWorldZ;
   const point = projectWorldPoint(
     {
       worldX: centerOffset + side * TUNNEL_ROOF_HALF_WIDTH,
-      worldY: roadPoint.worldY + TUNNEL_CEILING_HEIGHT,
+      worldY: worldY + TUNNEL_CEILING_HEIGHT,
       worldZ,
     },
     params,
@@ -636,14 +735,6 @@ export function renderTunnelEnvironment(
   drawTunnelLeftWallPath(ctx, aperture, 0);
   ctx.fill();
   drawTunnelRightWallPath(ctx, aperture, params.screenWidth);
-  ctx.fill();
-
-  // Close the distant end of the projected run once. This removes the
-  // skyline that would otherwise show through the tunnel's opening while
-  // preserving a real exit: as the camera approaches the run's end, the
-  // same camera fade makes this portal reveal the bright world behind it.
-  ctx.fillStyle = colorRgba(parseHex(palette.tunnelInterior), t * 0.84);
-  drawTunnelFarPortalPath(ctx, aperture);
   ctx.fill();
 
   // The projected roof edge is the only broad boundary line. It follows
@@ -764,18 +855,6 @@ function drawTunnelRightWallPath(
   ctx.lineTo(aperture.roofFarRight.x, aperture.roofFarRight.y);
   ctx.lineTo(aperture.roadFarRight.x, aperture.roadFarRight.y);
   ctx.lineTo(screenEdgeX, aperture.roadFarRight.y);
-  ctx.closePath();
-}
-
-function drawTunnelFarPortalPath(
-  ctx: CanvasRenderingContext2D,
-  aperture: TunnelApertureGeometry,
-): void {
-  ctx.beginPath();
-  ctx.moveTo(aperture.roofFarLeft.x, aperture.roofFarLeft.y);
-  ctx.lineTo(aperture.roofFarRight.x, aperture.roofFarRight.y);
-  ctx.lineTo(aperture.roadFarRight.x, aperture.roadFarRight.y);
-  ctx.lineTo(aperture.roadFarLeft.x, aperture.roadFarLeft.y);
   ctx.closePath();
 }
 

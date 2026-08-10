@@ -44,6 +44,11 @@ function makeProjectedSegment(startY: number, endY: number): ProjectedSegment {
     centerOffsetFar: 0,
     near: projectWorldPoint(seg.p1.world, params),
     far: projectWorldPoint(seg.p2.world, params),
+    nearWorldY: startY,
+    farWorldY: endY,
+    nearWorldZ: zBase,
+    farWorldZ: zFar,
+    nearProgress: 0,
   };
 }
 

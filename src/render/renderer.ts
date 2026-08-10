@@ -5,6 +5,7 @@ import {
 } from "./projection.ts";
 import {
   projectSegmentsAhead,
+  projectCurrentSegment,
   type ProjectedSegment,
   type ProjectInput,
 } from "./projected-segment.ts";
@@ -30,6 +31,8 @@ export interface RenderState {
   cameraZoneExitDist?: number;
   /** Fractional position inside the current segment, in [0, 1]. */
   cameraSegmentProgress?: number;
+  /** Segment containing the camera; used to clip the tunnel near edge. */
+  currentSegment?: RoadSegment;
   /** Normalized player lateral position, road edges at ±1. */
   playerX: number;
   /** Road direction derivative at the camera (dx), for curve rendering. */
@@ -92,10 +95,22 @@ export function renderFrame(
   const cameraInsideTunnel = state.cameraZone === "tunnel";
   const tunnelDetailSegments = new Set<ProjectedSegment>();
   const currentTunnelRun: ProjectedSegment[] = [];
+  const currentTunnelSegment = cameraInsideTunnel && state.currentSegment?.zone === "tunnel"
+    ? projectCurrentSegment(
+      state.currentSegment,
+      projParams,
+      projInput,
+      state.cameraSegmentProgress ?? 0,
+    )
+    : undefined;
   if (cameraInsideTunnel) {
     // `projected` is near → far. Only the contiguous tunnel run immediately
     // ahead of the camera belongs in the post-mask detail pass. A later
     // tunnel run remains in the ordinary painter order.
+    if (currentTunnelSegment) {
+      tunnelDetailSegments.add(currentTunnelSegment);
+      currentTunnelRun.push(currentTunnelSegment);
+    }
     for (const ps of projected) {
       if (ps.seg.zone !== "tunnel") break;
       tunnelDetailSegments.add(ps);
@@ -138,6 +153,16 @@ export function renderFrame(
     currentTunnelRun[currentTunnelRun.length - 1],
   );
   if (cameraInsideTunnel) {
+    if (currentTunnelSegment) {
+      renderTunnelFrameDetailsForSegment(
+        ctx,
+        currentTunnelSegment,
+        projParams,
+        height,
+        tunnelAperture ?? undefined,
+        { suppressEntrancePortal: true },
+      );
+    }
     for (const visible of visibleSegments) {
       if (!tunnelDetailSegments.has(visible.ps)) continue;
       renderTunnelFrameDetailsForSegment(
@@ -146,6 +171,7 @@ export function renderFrame(
         projParams,
         visible.clipTopY,
         tunnelAperture ?? undefined,
+        { suppressEntrancePortal: true },
       );
     }
   }

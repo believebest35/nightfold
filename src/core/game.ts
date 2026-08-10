@@ -186,6 +186,7 @@ export class Game {
       cameraZoneEntryDist: zoneObject?.entryDist,
       cameraZoneExitDist: zoneObject?.exitDist,
       cameraSegmentProgress: segmentProgress,
+      currentSegment: playerSegment,
       playerX: this.gameState.playerX,
       roadOffsetRate: roadState.offsetRate,
       totalLength: this.road.totalLength,
