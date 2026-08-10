@@ -91,13 +91,15 @@ export function renderFrame(
   const clip = createRoadClipState();
   const cameraInsideTunnel = state.cameraZone === "tunnel";
   const tunnelDetailSegments = new Set<ProjectedSegment>();
+  const currentTunnelRun: ProjectedSegment[] = [];
   if (cameraInsideTunnel) {
     // `projected` is near → far. Only the contiguous tunnel run immediately
-    // ahead of the camera belongs in the post-mask detail pass; a later
-    // wrapped tunnel must remain in the ordinary painter order.
+    // ahead of the camera belongs in the post-mask detail pass. A later
+    // tunnel run remains in the ordinary painter order.
     for (const ps of projected) {
       if (ps.seg.zone !== "tunnel") break;
       tunnelDetailSegments.add(ps);
+      currentTunnelRun.push(ps);
     }
   }
   const visibleSegments: Array<{ ps: ProjectedSegment; clipTopY: number }> = [];
@@ -111,9 +113,9 @@ export function renderFrame(
     const vis = renderRoadSegment(ctx, ps, projParams, state.debug, clip, replacementFade);
     if (vis.visible) {
       renderSceneryForSegment(ctx, ps, projParams, vis.clipTopY, {
-        // Outside the tunnel, portal details stay in the normal far → near
-        // pass so a nearer building or wall can occlude them naturally.
-        drawTunnelDetails: !cameraInsideTunnel,
+        // Only the current run is redrawn above the environment. Later
+        // tunnel runs keep their normal far → near detail order.
+        drawTunnelDetails: !tunnelDetailSegments.has(ps),
       });
       visibleSegments.push({ ps, clipTopY: vis.clipTopY });
     }
@@ -128,7 +130,13 @@ export function renderFrame(
     state.cameraZoneExitDist,
     state.cameraSegmentProgress ?? 0,
   );
-  const tunnelAperture = renderTunnelEnvironment(ctx, projParams, environmentFade);
+  const tunnelAperture = renderTunnelEnvironment(
+    ctx,
+    projParams,
+    environmentFade,
+    currentTunnelRun[0],
+    currentTunnelRun[currentTunnelRun.length - 1],
+  );
   if (cameraInsideTunnel) {
     for (const visible of visibleSegments) {
       if (!tunnelDetailSegments.has(visible.ps)) continue;

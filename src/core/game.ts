@@ -46,7 +46,8 @@ export class Game {
     this.sky = new SkyRenderer(gameConfig.worldSeed);
 
     // Debug/acceptance URL hooks: ?debug=1, ?z=nnn (initial position),
-    // ?autodrive=1. Kept deliberately minimal — not part of the game UI.
+    // ?x=-0.8..0.8 (initial lateral position), ?autodrive=1. Kept
+    // deliberately minimal — not part of the game UI.
     const query = new URLSearchParams(window.location.search);
     if (query.get("debug") === "1") {
       this.debugMode = true;
@@ -55,6 +56,10 @@ export class Game {
     if (Number.isFinite(startZ)) {
       this.gameState.positionZ =
         ((startZ % this.road.totalLength) + this.road.totalLength) % this.road.totalLength;
+    }
+    const startX = Number(query.get("x"));
+    if (Number.isFinite(startX)) {
+      this.gameState.playerX = Math.max(-1, Math.min(1, startX));
     }
     this.autoDrive = query.get("autodrive") === "1";
 
