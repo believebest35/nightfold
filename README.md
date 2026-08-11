@@ -58,10 +58,12 @@ Primary target device: MacBook M1 Pro.
 
 ## Project Status
 
-Currently in **Phase 5** — rain-night atmosphere and speed feel.
+Phase 5 is **complete** — rain-night atmosphere and speed feel are frozen.
 See `nightfold_impl_docu.md` for the full implementation plan.
 
 Phase 5 includes a fixed-count screen-space rain layer, speed-linked rain
 motion, restrained wet-road highlights, high-speed lines and camera shake,
 braking/off-road feedback, and adjustable weather intensity. The default
 intensity is 65%; use `[` and `]` during play, or start with `?weather=0..1`.
+
+Next: **Phase 6** — productization and release.
