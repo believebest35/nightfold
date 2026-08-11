@@ -16,6 +16,7 @@ const GUARDRAIL_INTERVAL = 4;
 const ELEVATED_GUARDRAIL_INTERVAL = 8;
 /** Ribbon half-width in world units. */
 const RAIL_HALF_WIDTH = 25;
+const WET_HIGHLIGHT_PHASE = 1.2;
 
 /** Draw order bookkeeping shared across segments (one per frame). */
 export interface RoadClipState {
@@ -200,8 +201,10 @@ function drawWetRoadHighlight(
   clipBottomY: number,
   weatherIntensity: number,
 ): void {
-  const laneOffset = ((ps.seg.index % 4) - 1.5) * 0.16;
-  const alpha = wetRoadHighlightAlpha(weatherIntensity);
+  // Slowly drift the sheen across the road so adjacent segments join into
+  // one continuous reflection instead of four repeating rectangles.
+  const laneOffset = wetRoadHighlightOffset(ps.seg.index);
+  const alpha = wetRoadHighlightAlpha(weatherIntensity, ps.seg.zone);
   drawTrapezoid(
     ctx,
     centerTop + halfWidthTop * laneOffset,
@@ -215,8 +218,17 @@ function drawWetRoadHighlight(
 }
 
 /** The wet sheen stays subtle enough that lane markers remain dominant. */
-export function wetRoadHighlightAlpha(weatherIntensity: number): number {
-  return 0.035 + Math.min(Math.max(weatherIntensity, 0), 1) * 0.075;
+export function wetRoadHighlightAlpha(
+  weatherIntensity: number,
+  zone: RoadZone = "city",
+): number {
+  const zoneFactor = zone === "tunnel" ? 0.55 : 1;
+  return Math.min(Math.max(weatherIntensity, 0), 1) * 0.11 * zoneFactor;
+}
+
+/** Continuous low-frequency lateral drift shared by neighboring segments. */
+export function wetRoadHighlightOffset(segmentIndex: number): number {
+  return Math.sin(segmentIndex * 0.25 + WET_HIGHLIGHT_PHASE) * 0.12;
 }
 
 /** Four guardrail ribbon corners for one side of one segment. */

@@ -49,6 +49,11 @@ export function clampWeatherIntensity(value: number): number {
   return clamp(value, 0, 1);
 }
 
+/** Rain opacity is continuous: zero weather means completely transparent. */
+export function rainAlpha(weatherIntensity: number): number {
+  return clampWeatherIntensity(weatherIntensity) * 0.34;
+}
+
 /** Rain motion follows car speed gently; the baseline motion prevents frozen rain. */
 export function rainSpeedMultiplier(speed: number, maxSpeed = gameConfig.maxSpeed): number {
   const speedRatio = clamp(speed / maxSpeed, 0, 1);
@@ -136,7 +141,7 @@ export class WeatherRenderer {
     const rainColor = parseHex(palette.lane);
     ctx.save();
     ctx.lineCap = "round";
-    ctx.strokeStyle = colorRgba(rainColor, 0.08 + intensity * 0.26);
+    ctx.strokeStyle = colorRgba(rainColor, rainAlpha(intensity));
 
     for (const drop of this.rainDrops) {
       const x = mod(drop.x + elapsedSeconds * 0.006, 1.1) * width - width * 0.05;

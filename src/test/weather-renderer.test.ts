@@ -4,6 +4,7 @@ import {
   cameraShakeOffset,
   clampWeatherIntensity,
   highSpeedFactor,
+  rainAlpha,
   rainSpeedMultiplier,
   WeatherRenderer,
 } from "../render/weather-renderer.ts";
@@ -96,5 +97,13 @@ describe("weather renderer", () => {
       offRoad: true,
     });
     expect(feedback.rects).toBe(4);
+  });
+
+  it("fades rain opacity continuously from zero", () => {
+    expect(rainAlpha(0)).toBe(0);
+    expect(rainAlpha(0.1)).toBeGreaterThan(0);
+    expect(rainAlpha(0.1)).toBeLessThan(rainAlpha(0.65));
+    expect(rainAlpha(0.65)).toBeLessThan(rainAlpha(1));
+    expect(rainAlpha(2)).toBe(0.34);
   });
 });

@@ -5,6 +5,7 @@ import {
   guardrailSideVisibility,
   guardrailSupportPostVisible,
   wetRoadHighlightAlpha,
+  wetRoadHighlightOffset,
 } from "../render/road-renderer.ts";
 import { projectWorldPoint, type ProjectionParams } from "../render/projection.ts";
 import type { ProjectedSegment } from "../render/projected-segment.ts";
@@ -165,9 +166,22 @@ describe("guardrail transition support posts", () => {
 
 describe("wet road highlight", () => {
   it("scales gently with weather intensity", () => {
-    expect(wetRoadHighlightAlpha(0)).toBe(0.035);
-    expect(wetRoadHighlightAlpha(0.65)).toBeCloseTo(0.08375, 5);
+    expect(wetRoadHighlightAlpha(0)).toBe(0);
+    expect(wetRoadHighlightAlpha(0.65)).toBeCloseTo(0.0715, 5);
     expect(wetRoadHighlightAlpha(1)).toBe(0.11);
     expect(wetRoadHighlightAlpha(2)).toBe(0.11);
+    expect(wetRoadHighlightAlpha(1, "tunnel")).toBeCloseTo(0.0605, 5);
+  });
+
+  it("moves the sheen continuously across adjacent segments", () => {
+    const offsets = [0, 1, 2, 3, 4].map(wetRoadHighlightOffset);
+    for (let i = 1; i < offsets.length; i++) {
+      const previous = offsets[i - 1];
+      const current = offsets[i];
+      if (previous === undefined || current === undefined) throw new Error("missing sheen offset");
+      expect(Math.abs(current - previous)).toBeLessThan(0.04);
+    }
+    expect(Math.max(...offsets)).toBeLessThanOrEqual(0.12);
+    expect(Math.min(...offsets)).toBeGreaterThanOrEqual(-0.12);
   });
 });

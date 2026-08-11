@@ -16,6 +16,7 @@ import {
 } from "../world/road-query.ts";
 import { renderFrame, type RenderState } from "../render/renderer.ts";
 import { SkyRenderer } from "../render/sky-renderer.ts";
+import { parseWeatherIntensity } from "./game-options.ts";
 import {
   cameraShakeOffset,
   clampWeatherIntensity,
@@ -68,10 +69,7 @@ export class Game {
     if (Number.isFinite(startX)) {
       this.gameState.playerX = Math.max(-1, Math.min(1, startX));
     }
-    const weather = Number(query.get("weather"));
-    if (Number.isFinite(weather)) {
-      this.gameState.weatherIntensity = clampWeatherIntensity(weather);
-    }
+    this.gameState.weatherIntensity = parseWeatherIntensity(query);
     this.autoDrive = query.get("autodrive") === "1";
 
     const dims = resizeCanvas(this.canvas);
