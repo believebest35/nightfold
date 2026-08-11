@@ -41,6 +41,8 @@ export interface RenderState {
   totalLength: number;
   /** Monotonically increasing distance, drives background parallax. */
   distanceTravelled: number;
+  /** Screen-space weather strength, also controls road wetness. */
+  weatherIntensity?: number;
   debug: boolean;
 }
 
@@ -131,7 +133,15 @@ export function renderFrame(
     // scenery only draws for visible segments and truncates object
     // bases at the hill crest (no ground-level objects through terrain).
     const replacementFade = zoneReplacementFade(ps);
-    const vis = renderRoadSegment(ctx, ps, projParams, state.debug, clip, replacementFade);
+    const vis = renderRoadSegment(
+      ctx,
+      ps,
+      projParams,
+      state.debug,
+      clip,
+      replacementFade,
+      state.weatherIntensity ?? 0,
+    );
     if (vis.visible) {
       const isTunnelSegment = ps.seg.zone === "tunnel";
       renderSceneryForSegment(ctx, ps, projParams, vis.clipTopY, {

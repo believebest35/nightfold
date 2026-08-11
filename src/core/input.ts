@@ -23,6 +23,8 @@ export function setupInput(): void {
       "escape",
       "r",
       "f",
+      "[",
+      "]",
     ];
     if (gameKeys.includes(normalizeKey(e.key))) {
       e.preventDefault();

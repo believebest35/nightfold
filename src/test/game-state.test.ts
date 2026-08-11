@@ -8,6 +8,9 @@ describe("createInitialGameState", () => {
     expect(state.speed).toBe(0);
     expect(state.playerX).toBe(0);
     expect(state.distanceTravelled).toBe(0);
+    expect(state.weatherIntensity).toBeGreaterThan(0);
+    expect(state.weatherIntensity).toBeLessThanOrEqual(1);
+    expect(state.braking).toBe(false);
     expect(state.paused).toBe(false);
     expect(state.elapsedSeconds).toBe(0);
   });

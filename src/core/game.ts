@@ -16,6 +16,11 @@ import {
 } from "../world/road-query.ts";
 import { renderFrame, type RenderState } from "../render/renderer.ts";
 import { SkyRenderer } from "../render/sky-renderer.ts";
+import {
+  cameraShakeOffset,
+  clampWeatherIntensity,
+  WeatherRenderer,
+} from "../render/weather-renderer.ts";
 import { attachScenery } from "../world/scenery-generator.ts";
 
 /** Amplitude of the off-road screen shake, in logical pixels. */
@@ -29,6 +34,7 @@ export class Game {
   private fpsFrames: number[] = [];
   private road: GeneratedRoad;
   private sky: SkyRenderer;
+  private weatherRenderer: WeatherRenderer;
   private debugMode = false;
   /** Acceptance-test hook: ?autodrive=1 simulates a held accelerate key. */
   private autoDrive = false;
@@ -44,6 +50,7 @@ export class Game {
     this.road = buildDefaultRoad();
     attachScenery(this.road.segments, gameConfig.worldSeed);
     this.sky = new SkyRenderer(gameConfig.worldSeed);
+    this.weatherRenderer = new WeatherRenderer(gameConfig.worldSeed + 1);
 
     // Debug/acceptance URL hooks: ?debug=1, ?z=nnn (initial position),
     // ?x=-0.8..0.8 (initial lateral position), ?autodrive=1. Kept
@@ -60,6 +67,10 @@ export class Game {
     const startX = Number(query.get("x"));
     if (Number.isFinite(startX)) {
       this.gameState.playerX = Math.max(-1, Math.min(1, startX));
+    }
+    const weather = Number(query.get("weather"));
+    if (Number.isFinite(weather)) {
+      this.gameState.weatherIntensity = clampWeatherIntensity(weather);
     }
     this.autoDrive = query.get("autodrive") === "1";
 
@@ -101,18 +112,31 @@ export class Game {
       this.gameState.playerX = 0;
     }
 
+    if (consumeKeyPress("[")) {
+      this.gameState.weatherIntensity = clampWeatherIntensity(
+        this.gameState.weatherIntensity - 0.1,
+      );
+    }
+    if (consumeKeyPress("]")) {
+      this.gameState.weatherIntensity = clampWeatherIntensity(
+        this.gameState.weatherIntensity + 0.1,
+      );
+    }
+
     // Toggle debug mode
     if (consumeKeyPress("`")) {
       this.debugMode = !this.debugMode;
     }
 
     if (this.gameState.paused) {
+      this.gameState.braking = false;
       return;
     }
 
     const input: InputState = this.autoDrive
       ? { accelerate: true, brake: false, steerLeft: false, steerRight: false }
       : readInput();
+    this.gameState.braking = input.brake;
     const playerSegment = findSegmentAtZ(
       this.road.segments,
       this.road.totalLength,
@@ -131,14 +155,20 @@ export class Game {
   private render(): void {
     const { ctx, width, height, dpr } = this.renderCtx;
     const offRoad = Math.abs(this.gameState.playerX) > 1;
+    const highSpeedShake = cameraShakeOffset(
+      this.gameState.elapsedSeconds,
+      this.gameState.speed,
+    );
 
     // ---- World layer (off-road shake affects the world and vehicle only) ----
     ctx.save();
     ctx.scale(dpr, dpr);
     if (offRoad) {
       const depth = Math.abs(this.gameState.playerX) - 1;
-      const shake = Math.min(depth * 8, OFF_ROAD_SHAKE_MAX) * Math.sign(this.gameState.playerX);
-      ctx.translate(shake, 0);
+      const offRoadShake = Math.min(depth * 8, OFF_ROAD_SHAKE_MAX) * Math.sign(this.gameState.playerX);
+      ctx.translate(offRoadShake + highSpeedShake.x, highSpeedShake.y);
+    } else {
+      ctx.translate(highSpeedShake.x, highSpeedShake.y);
     }
 
     const segmentsAhead = getSegmentsAhead(
@@ -191,6 +221,7 @@ export class Game {
       roadOffsetRate: roadState.offsetRate,
       totalLength: this.road.totalLength,
       distanceTravelled: this.gameState.distanceTravelled,
+      weatherIntensity: this.gameState.weatherIntensity,
       debug: this.debugMode,
     };
 
@@ -200,6 +231,13 @@ export class Game {
     // ---- Fixed screen-space UI (never shakes) ----
     ctx.save();
     ctx.scale(dpr, dpr);
+    this.weatherRenderer.render(ctx, width, height, {
+      elapsedSeconds: this.gameState.elapsedSeconds,
+      speed: this.gameState.speed,
+      weatherIntensity: this.gameState.weatherIntensity,
+      braking: this.gameState.braking,
+      offRoad,
+    });
     this.drawHud(width, height, offRoad);
     if (this.gameState.paused) {
       this.drawPauseOverlay(width, height);
@@ -273,6 +311,7 @@ export class Game {
       `Window: ${width}×${Math.round(window.innerHeight)}`,
       `DPR: ${window.devicePixelRatio}`,
       `Speed: ${speedPercent}%`,
+      `Weather: ${Math.round(this.gameState.weatherIntensity * 100)}%`,
       `PosZ: ${Math.round(this.gameState.positionZ)}`,
       `Dist: ${Math.round(this.gameState.distanceTravelled)}`,
       `Debug: ${this.debugMode ? "ON" : "OFF"} (\`)`,

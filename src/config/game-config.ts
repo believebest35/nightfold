@@ -16,6 +16,9 @@ export const gameConfig = {
   steeringRate: 2.2,
   centrifugalForce: 0.32,
   fogDensity: 4.5,
+  weatherIntensity: 0.65,
+  rainDropCount: 96,
+  speedLineCount: 14,
   maxDevicePixelRatio: 2,
   worldSeed: 20260728,
 } as const;

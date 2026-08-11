@@ -9,6 +9,7 @@ export const palette = {
   vehicleBody: "#151926",
   road: "#1e2432",
   roadAlt: "#242b3a",
+  wetHighlight: "#8d9eb8",
   lane: "#d8d2b8",
   guardrail: "#596273",
   tunnelInterior: "#080b14",

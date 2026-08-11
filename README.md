@@ -26,6 +26,7 @@ Open the URL shown in the terminal (usually `http://localhost:5173`).
 | `P` / `Escape` | Pause |
 | `R` | Reset to road center |
 | `F` | Toggle fullscreen |
+| `[` / `]` | Decrease / increase weather intensity |
 
 ## Scripts
 
@@ -57,5 +58,10 @@ Primary target device: MacBook M1 Pro.
 
 ## Project Status
 
-Currently in **Phase 3** — night city visuals.
+Currently in **Phase 5** — rain-night atmosphere and speed feel.
 See `nightfold_impl_docu.md` for the full implementation plan.
+
+Phase 5 includes a fixed-count screen-space rain layer, speed-linked rain
+motion, restrained wet-road highlights, high-speed lines and camera shake,
+braking/off-road feedback, and adjustable weather intensity. The default
+intensity is 65%; use `[` and `]` during play, or start with `?weather=0..1`.

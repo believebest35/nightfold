@@ -4,6 +4,7 @@ import {
   guardrailRibbonGeometry,
   guardrailSideVisibility,
   guardrailSupportPostVisible,
+  wetRoadHighlightAlpha,
 } from "../render/road-renderer.ts";
 import { projectWorldPoint, type ProjectionParams } from "../render/projection.ts";
 import type { ProjectedSegment } from "../render/projected-segment.ts";
@@ -159,5 +160,14 @@ describe("guardrail transition support posts", () => {
     expect(guardrailSupportPostVisible("riverside", 1, -1, 276)).toBe(false);
     expect(guardrailSupportPostVisible("riverside", 1, 1, 276)).toBe(true);
     expect(guardrailSupportPostVisible("riverside", 0.5, -1, 277)).toBe(false);
+  });
+});
+
+describe("wet road highlight", () => {
+  it("scales gently with weather intensity", () => {
+    expect(wetRoadHighlightAlpha(0)).toBe(0.035);
+    expect(wetRoadHighlightAlpha(0.65)).toBeCloseTo(0.08375, 5);
+    expect(wetRoadHighlightAlpha(1)).toBe(0.11);
+    expect(wetRoadHighlightAlpha(2)).toBe(0.11);
   });
 });

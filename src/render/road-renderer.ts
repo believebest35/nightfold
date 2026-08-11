@@ -3,6 +3,7 @@ import { projectWorldPoint, type ProjectionParams } from "./projection.ts";
 import type { RoadZone, ScreenPoint } from "../model/types.ts";
 import { gameConfig } from "../config/game-config.ts";
 import { palette } from "../config/palette.ts";
+import { colorRgba, parseHex } from "./fog.ts";
 
 const SHOULDER_WIDTH_FACTOR = 1.4;
 const EDGE_LINE_WIDTH_FACTOR = 0.05;
@@ -53,6 +54,7 @@ export function renderRoadSegment(
   debug: boolean,
   clip: RoadClipState,
   replacementFade = 0,
+  weatherIntensity = 0,
 ): SegmentVisibility {
   const { near, far } = ps;
   const screenHeight = params.screenHeight;
@@ -103,6 +105,22 @@ export function renderRoadSegment(
     clipBottomY,
     roadColor,
   );
+
+  // A restrained screen-facing sheen makes the road read as wet without
+  // obscuring lane markers or turning the whole surface into a mirror.
+  if (weatherIntensity > 0 && halfWidthBottom > 30) {
+    drawWetRoadHighlight(
+      ctx,
+      ps,
+      centerXTop,
+      centerXBottom,
+      halfWidthTop,
+      halfWidthBottom,
+      clipTopY,
+      clipBottomY,
+      weatherIntensity,
+    );
+  }
 
   // 3. Guardrail ribbon along both road edges, just outside the shoulder.
   // Tunnel walls and river banks replace the rails progressively at the
@@ -169,6 +187,36 @@ export function renderRoadSegment(
   }
 
   return { visible: true, clipTopY, clipBottomY };
+}
+
+function drawWetRoadHighlight(
+  ctx: CanvasRenderingContext2D,
+  ps: ProjectedSegment,
+  centerTop: number,
+  centerBottom: number,
+  halfWidthTop: number,
+  halfWidthBottom: number,
+  clipTopY: number,
+  clipBottomY: number,
+  weatherIntensity: number,
+): void {
+  const laneOffset = ((ps.seg.index % 4) - 1.5) * 0.16;
+  const alpha = wetRoadHighlightAlpha(weatherIntensity);
+  drawTrapezoid(
+    ctx,
+    centerTop + halfWidthTop * laneOffset,
+    centerBottom + halfWidthBottom * laneOffset,
+    Math.max(halfWidthTop * 0.035, 1),
+    Math.max(halfWidthBottom * 0.035, 1.5),
+    clipTopY,
+    clipBottomY,
+    colorRgba(parseHex(palette.wetHighlight), alpha),
+  );
+}
+
+/** The wet sheen stays subtle enough that lane markers remain dominant. */
+export function wetRoadHighlightAlpha(weatherIntensity: number): number {
+  return 0.035 + Math.min(Math.max(weatherIntensity, 0), 1) * 0.075;
 }
 
 /** Four guardrail ribbon corners for one side of one segment. */

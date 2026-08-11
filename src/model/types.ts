@@ -70,6 +70,8 @@ export interface GameState {
   speed: number;
   playerX: number;
   distanceTravelled: number;
+  weatherIntensity: number;
+  braking: boolean;
   paused: boolean;
   elapsedSeconds: number;
 }
