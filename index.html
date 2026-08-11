@@ -3,12 +3,102 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Nightfold</title>
+    <title>Nightfold — Fold the Night</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <canvas id="game-canvas"></canvas>
+    <main id="app" aria-label="Nightfold game">
+      <canvas id="game-canvas" aria-label="Nightfold driving canvas"></canvas>
+
+      <section id="title-screen" class="screen-panel" aria-labelledby="game-title">
+        <div class="title-card">
+          <p class="eyebrow">AN ENDLESS DRIVE THROUGH A FOLDED NEON CITY</p>
+          <h1 id="game-title">NIGHTFOLD</h1>
+          <p class="tagline">Rain on glass. Lights below. Keep the line.</p>
+          <button class="primary-button" data-action="start" type="button">Start drive</button>
+          <div class="title-actions">
+            <button class="ghost-button" data-action="controls" type="button">Controls</button>
+            <button class="ghost-button" data-action="settings" type="button">Settings</button>
+          </div>
+          <p class="save-note">Settings are saved on this device.</p>
+        </div>
+      </section>
+
+      <section id="game-toolbar" class="game-toolbar" aria-label="Game controls" hidden>
+        <div class="toolbar-group">
+          <button class="icon-button" data-action="pause" type="button" aria-label="Pause game">Pause</button>
+          <button class="icon-button" data-action="restart" type="button" aria-label="Restart drive">Restart</button>
+        </div>
+        <div class="toolbar-group">
+          <button class="icon-button" data-action="settings" type="button">Settings</button>
+          <button class="icon-button" data-action="fullscreen" type="button">Fullscreen</button>
+        </div>
+      </section>
+
+      <section id="pause-panel" class="modal-panel" aria-labelledby="pause-title" hidden>
+        <div class="modal-card">
+          <p class="eyebrow">THE CITY CAN WAIT</p>
+          <h2 id="pause-title">Paused</h2>
+          <button class="primary-button" data-action="resume" type="button">Resume</button>
+          <button class="ghost-button" data-action="restart" type="button">Restart drive</button>
+          <button class="text-button" data-action="title" type="button">Back to title</button>
+        </div>
+      </section>
+
+      <section id="settings-panel" class="modal-panel" aria-labelledby="settings-title" hidden>
+        <div class="modal-card settings-card">
+          <div class="modal-heading">
+            <div>
+              <p class="eyebrow">LOCAL SETTINGS</p>
+              <h2 id="settings-title">Settings</h2>
+            </div>
+            <button class="close-button" data-action="close-settings" type="button" aria-label="Close settings">×</button>
+          </div>
+          <fieldset>
+            <legend>Image quality</legend>
+            <div class="quality-options" role="radiogroup" aria-label="Image quality">
+              <button class="quality-button" data-quality="low" type="button">Low</button>
+              <button class="quality-button" data-quality="medium" type="button">Medium</button>
+              <button class="quality-button" data-quality="high" type="button">High</button>
+            </div>
+            <p class="setting-help">Higher quality draws more road distance and weather detail.</p>
+          </fieldset>
+          <label class="range-label" for="weather-intensity">Weather intensity <output id="weather-value">65%</output></label>
+          <input id="weather-intensity" type="range" min="0" max="1" step="0.05" />
+          <p class="setting-help">Keyboard: <kbd>[</kbd> / <kbd>]</kbd> adjusts weather while driving.</p>
+        </div>
+      </section>
+
+      <section id="controls-panel" class="modal-panel" aria-labelledby="controls-title" hidden>
+        <div class="modal-card controls-card">
+          <div class="modal-heading">
+            <div>
+              <p class="eyebrow">DRIVE GUIDE</p>
+              <h2 id="controls-title">Controls</h2>
+            </div>
+            <button class="close-button" data-action="close-controls" type="button" aria-label="Close controls">×</button>
+          </div>
+          <dl class="controls-list">
+            <div><dt><kbd>W</kbd> <kbd>↑</kbd></dt><dd>Accelerate</dd></div>
+            <div><dt><kbd>S</kbd> <kbd>↓</kbd></dt><dd>Brake</dd></div>
+            <div><dt><kbd>A</kbd> <kbd>←</kbd></dt><dd>Steer left</dd></div>
+            <div><dt><kbd>D</kbd> <kbd>→</kbd></dt><dd>Steer right</dd></div>
+            <div><dt><kbd>P</kbd> / <kbd>Esc</kbd></dt><dd>Pause</dd></div>
+            <div><dt><kbd>R</kbd></dt><dd>Reset to road center</dd></div>
+            <div><dt><kbd>F</kbd></dt><dd>Toggle fullscreen</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section id="fatal-error" class="screen-panel error-panel" hidden aria-live="assertive">
+        <div class="title-card">
+          <p class="eyebrow">NIGHTFOLD COULD NOT START</p>
+          <h2>Canvas unavailable</h2>
+          <p id="fatal-error-message" class="tagline">Try a current version of Chrome, Safari, or Edge.</p>
+        </div>
+      </section>
+    </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

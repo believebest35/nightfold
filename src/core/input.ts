@@ -1,12 +1,15 @@
 import type { InputState } from "../model/types.ts";
 
 const keyState: Record<string, boolean> = {};
+let inputIsSetup = false;
 
 function normalizeKey(key: string): string {
   return key.toLowerCase();
 }
 
 export function setupInput(): void {
+  if (inputIsSetup) return;
+  inputIsSetup = true;
   window.addEventListener("keydown", (e) => {
     keyState[normalizeKey(e.key)] = true;
     // Prevent default for game keys to avoid scrolling etc.

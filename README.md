@@ -6,6 +6,8 @@ Nightfold is a pseudo-3D night driving experience running in a modern browser
 using HTML5 Canvas 2D. Drive along procedurally generated mountain city roads
 through curves, slopes, elevated highways, tunnels, and rainy neon nights.
 
+![Nightfold title screen](./public/nightfold-title.png)
+
 ## Quick Start
 
 ```bash
@@ -14,6 +16,10 @@ npm run dev
 ```
 
 Open the URL shown in the terminal (usually `http://localhost:5173`).
+
+The title screen is the entry point: choose **Start drive** to begin. Open
+**Settings** before or during a run to choose Low / Medium / High quality and
+adjust weather intensity. These two settings are kept in local storage.
 
 ## Controls
 
@@ -66,4 +72,13 @@ motion, restrained wet-road highlights, high-speed lines and camera shake,
 braking/off-road feedback, and adjustable weather intensity. The default
 intensity is 65%; use `[` and `]` during play, or start with `?weather=0..1`.
 
-Next: **Phase 6** — productization and release.
+Phase 6 is **complete** — productized entry flow, settings, controls, errors,
+fullscreen, and a GitHub Pages workflow are included. The workflow publishes
+on pushes to `main` after the full verification suite passes.
+
+## GitHub Pages
+
+The repository includes a GitHub Actions workflow for Pages. Enable GitHub
+Pages with **GitHub Actions** as the source, then push to `main`; the workflow
+runs the full check suite and publishes the `dist/` build. The Vite base path
+is configured for a repository named `nightfold`.

@@ -6,14 +6,17 @@ export interface QueryParameters {
 }
 
 /** Read weather without treating a missing or blank query value as zero. */
-export function parseWeatherIntensity(query: QueryParameters): number {
+export function parseWeatherIntensity(
+  query: QueryParameters,
+  fallback: number = gameConfig.weatherIntensity,
+): number {
   const weatherParam = query.get("weather");
   if (weatherParam === null || weatherParam.trim() === "") {
-    return gameConfig.weatherIntensity;
+    return fallback;
   }
 
   const weather = Number(weatherParam);
   return Number.isFinite(weather)
     ? clampWeatherIntensity(weather)
-    : gameConfig.weatherIntensity;
+    : fallback;
 }

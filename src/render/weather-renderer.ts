@@ -2,6 +2,7 @@ import { gameConfig } from "../config/game-config.ts";
 import { palette } from "../config/palette.ts";
 import { colorRgba, parseHex } from "./fog.ts";
 import { SeededRandom } from "../world/seeded-random.ts";
+import { getQualityProfile, type Quality } from "../core/settings.ts";
 
 interface RainDrop {
   x: number;
@@ -24,6 +25,7 @@ export interface WeatherRenderState {
   weatherIntensity: number;
   braking: boolean;
   offRoad: boolean;
+  quality?: Quality;
 }
 
 export interface CameraShakeOffset {
@@ -116,14 +118,24 @@ export class WeatherRenderer {
     const intensity = clampWeatherIntensity(state.weatherIntensity);
     const speedRatio = clamp(state.speed / gameConfig.maxSpeed, 0, 1);
     const rainMotion = rainSpeedMultiplier(state.speed);
+    const profile = getQualityProfile(state.quality ?? "high");
 
     if (intensity > 0) {
-      this.renderRain(ctx, width, height, state.elapsedSeconds, intensity, rainMotion, speedRatio);
+      this.renderRain(
+        ctx,
+        width,
+        height,
+        state.elapsedSeconds,
+        intensity,
+        rainMotion,
+        speedRatio,
+        profile.rainDropCount,
+      );
     }
 
     const speedFactor = highSpeedFactor(state.speed);
     if (speedFactor > 0) {
-      this.renderSpeedLines(ctx, width, height, speedFactor);
+      this.renderSpeedLines(ctx, width, height, speedFactor, profile.speedLineCount);
     }
 
     this.renderFeedback(ctx, width, height, state, speedFactor);
@@ -137,13 +149,17 @@ export class WeatherRenderer {
     intensity: number,
     rainMotion: number,
     speedRatio: number,
+    dropCount: number,
   ): void {
     const rainColor = parseHex(palette.lane);
     ctx.save();
     ctx.lineCap = "round";
     ctx.strokeStyle = colorRgba(rainColor, rainAlpha(intensity));
 
-    for (const drop of this.rainDrops) {
+    const visibleDropCount = Math.min(dropCount, this.rainDrops.length);
+    for (let i = 0; i < visibleDropCount; i++) {
+      const drop = this.rainDrops[i];
+      if (!drop) continue;
       const x = mod(drop.x + elapsedSeconds * 0.006, 1.1) * width - width * 0.05;
       const y = mod(drop.y + elapsedSeconds * drop.speed * rainMotion * 0.72, 1.08) * height - height * 0.04;
       const length = drop.length * height * (0.85 + speedRatio * 0.22);
@@ -162,13 +178,17 @@ export class WeatherRenderer {
     width: number,
     height: number,
     speedFactor: number,
+    lineCount: number,
   ): void {
     const lineColor = parseHex(palette.neonCyan);
     ctx.save();
     ctx.strokeStyle = colorRgba(lineColor, 0.04 + speedFactor * 0.12);
     ctx.lineCap = "round";
 
-    for (const line of this.speedLines) {
+    const visibleLineCount = Math.min(lineCount, this.speedLines.length);
+    for (let i = 0; i < visibleLineCount; i++) {
+      const line = this.speedLines[i];
+      if (!line) continue;
       const x = line.x * width;
       const y = line.y * height;
       const length = line.length * height * (0.7 + speedFactor * 0.8);

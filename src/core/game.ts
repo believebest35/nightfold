@@ -18,14 +18,26 @@ import { renderFrame, type RenderState } from "../render/renderer.ts";
 import { SkyRenderer } from "../render/sky-renderer.ts";
 import { parseWeatherIntensity } from "./game-options.ts";
 import {
+  clampSettingWeather,
+  createDefaultSettings,
+  getQualityProfile,
+  type GameSettings,
+  type Quality,
+} from "./settings.ts";
+import {
   cameraShakeOffset,
-  clampWeatherIntensity,
   WeatherRenderer,
 } from "../render/weather-renderer.ts";
 import { attachScenery } from "../world/scenery-generator.ts";
 
 /** Amplitude of the off-road screen shake, in logical pixels. */
 const OFF_ROAD_SHAKE_MAX = 6;
+
+export interface GameOptions {
+  settings?: GameSettings;
+  onSettingsChange?: (settings: GameSettings) => void;
+  onPauseChange?: (paused: boolean) => void;
+}
 
 export class Game {
   private canvas: HTMLCanvasElement;
@@ -36,12 +48,25 @@ export class Game {
   private road: GeneratedRoad;
   private sky: SkyRenderer;
   private weatherRenderer: WeatherRenderer;
+  private settings: GameSettings;
+  private readonly onSettingsChange?: (settings: GameSettings) => void;
+  private readonly onPauseChange?: (paused: boolean) => void;
+  private loop: ReturnType<typeof createGameLoop> | null = null;
   private debugMode = false;
   /** Acceptance-test hook: ?autodrive=1 simulates a held accelerate key. */
   private autoDrive = false;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, options: GameOptions = {}) {
     this.canvas = canvas;
+    this.settings = {
+      ...createDefaultSettings(),
+      ...options.settings,
+      weatherIntensity: clampSettingWeather(
+        options.settings?.weatherIntensity ?? createDefaultSettings().weatherIntensity,
+      ),
+    };
+    this.onSettingsChange = options.onSettingsChange;
+    this.onPauseChange = options.onPauseChange;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       throw new Error("Canvas 2D context not available");
@@ -69,7 +94,8 @@ export class Game {
     if (Number.isFinite(startX)) {
       this.gameState.playerX = Math.max(-1, Math.min(1, startX));
     }
-    this.gameState.weatherIntensity = parseWeatherIntensity(query);
+    this.gameState.weatherIntensity = parseWeatherIntensity(query, this.settings.weatherIntensity);
+    this.settings.weatherIntensity = this.gameState.weatherIntensity;
     this.autoDrive = query.get("autodrive") === "1";
 
     const dims = resizeCanvas(this.canvas);
@@ -82,14 +108,66 @@ export class Game {
   }
 
   start(): void {
+    if (this.loop) return;
     setupInput();
     window.addEventListener("resize", this.handleResize.bind(this));
 
-    const loop = createGameLoop(
+    this.loop = createGameLoop(
       (dt) => { this.update(dt); },
       (_alpha) => { this.render(); },
     );
-    loop.start();
+    this.loop.start();
+  }
+
+  stop(): void {
+    this.loop?.stop();
+    this.loop = null;
+  }
+
+  reset(): void {
+    this.gameState.positionZ = 0;
+    this.gameState.speed = 0;
+    this.gameState.playerX = 0;
+    this.gameState.distanceTravelled = 0;
+    this.gameState.elapsedSeconds = 0;
+    this.gameState.braking = false;
+    this.setPaused(false);
+  }
+
+  togglePaused(): void {
+    this.setPaused(!this.gameState.paused);
+  }
+
+  setPaused(paused: boolean): void {
+    if (this.gameState.paused === paused) return;
+    this.gameState.paused = paused;
+    this.onPauseChange?.(paused);
+  }
+
+  isPaused(): boolean {
+    return this.gameState.paused;
+  }
+
+  setQuality(quality: Quality): void {
+    if (this.settings.quality === quality) return;
+    this.settings = { ...this.settings, quality };
+    this.emitSettingsChange();
+  }
+
+  setWeatherIntensity(weatherIntensity: number): void {
+    const next = clampSettingWeather(weatherIntensity);
+    if (this.gameState.weatherIntensity === next) return;
+    this.gameState.weatherIntensity = next;
+    this.settings = { ...this.settings, weatherIntensity: next };
+    this.emitSettingsChange();
+  }
+
+  getSettings(): GameSettings {
+    return { ...this.settings, weatherIntensity: this.gameState.weatherIntensity };
+  }
+
+  private emitSettingsChange(): void {
+    this.onSettingsChange?.(this.getSettings());
   }
 
   private handleResize(): void {
@@ -102,7 +180,7 @@ export class Game {
   private update(dt: number): void {
     // Toggle pause
     if (consumeKeyPress("p") || consumeKeyPress("escape")) {
-      this.gameState.paused = !this.gameState.paused;
+      this.togglePaused();
     }
 
     // Reset to road center
@@ -111,14 +189,10 @@ export class Game {
     }
 
     if (consumeKeyPress("[")) {
-      this.gameState.weatherIntensity = clampWeatherIntensity(
-        this.gameState.weatherIntensity - 0.1,
-      );
+      this.setWeatherIntensity(this.gameState.weatherIntensity - 0.1);
     }
     if (consumeKeyPress("]")) {
-      this.gameState.weatherIntensity = clampWeatherIntensity(
-        this.gameState.weatherIntensity + 0.1,
-      );
+      this.setWeatherIntensity(this.gameState.weatherIntensity + 0.1);
     }
 
     // Toggle debug mode
@@ -173,7 +247,7 @@ export class Game {
       this.road.segments,
       this.road.totalLength,
       this.gameState.positionZ,
-      gameConfig.drawDistance,
+      getQualityProfile(this.settings.quality).drawDistance,
     );
 
     const playerSegment = findSegmentAtZ(
@@ -233,6 +307,7 @@ export class Game {
       elapsedSeconds: this.gameState.elapsedSeconds,
       speed: this.gameState.speed,
       weatherIntensity: this.gameState.weatherIntensity,
+      quality: this.settings.quality,
       braking: this.gameState.braking,
       offRoad,
     });
