@@ -6,6 +6,7 @@ import {
   guardrailSupportPostVisible,
   wetRoadHighlightAlpha,
   wetRoadHighlightOffset,
+  wetRoadHighlightOffsets,
 } from "../render/road-renderer.ts";
 import { projectWorldPoint, type ProjectionParams } from "../render/projection.ts";
 import type { ProjectedSegment } from "../render/projected-segment.ts";
@@ -183,5 +184,13 @@ describe("wet road highlight", () => {
     }
     expect(Math.max(...offsets)).toBeLessThanOrEqual(0.12);
     expect(Math.min(...offsets)).toBeGreaterThanOrEqual(-0.12);
+  });
+
+  it("shares the exact wet sheen offset at adjacent segment boundaries", () => {
+    const current = wetRoadHighlightOffsets(12);
+    const next = wetRoadHighlightOffsets(13);
+    expect(current.farOffset).toBe(next.nearOffset);
+    expect(current.nearOffset).toBe(wetRoadHighlightOffset(12));
+    expect(next.farOffset).toBe(wetRoadHighlightOffset(14));
   });
 });

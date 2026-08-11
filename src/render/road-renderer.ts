@@ -203,12 +203,12 @@ function drawWetRoadHighlight(
 ): void {
   // Slowly drift the sheen across the road so adjacent segments join into
   // one continuous reflection instead of four repeating rectangles.
-  const laneOffset = wetRoadHighlightOffset(ps.seg.index);
+  const { nearOffset, farOffset } = wetRoadHighlightOffsets(ps.seg.index);
   const alpha = wetRoadHighlightAlpha(weatherIntensity, ps.seg.zone);
   drawTrapezoid(
     ctx,
-    centerTop + halfWidthTop * laneOffset,
-    centerBottom + halfWidthBottom * laneOffset,
+    centerTop + halfWidthTop * farOffset,
+    centerBottom + halfWidthBottom * nearOffset,
     Math.max(halfWidthTop * 0.035, 1),
     Math.max(halfWidthBottom * 0.035, 1.5),
     clipTopY,
@@ -229,6 +229,17 @@ export function wetRoadHighlightAlpha(
 /** Continuous low-frequency lateral drift shared by neighboring segments. */
 export function wetRoadHighlightOffset(segmentIndex: number): number {
   return Math.sin(segmentIndex * 0.25 + WET_HIGHLIGHT_PHASE) * 0.12;
+}
+
+/** Endpoint offsets for one segment; the far endpoint is the next segment's near offset. */
+export function wetRoadHighlightOffsets(segmentIndex: number): {
+  nearOffset: number;
+  farOffset: number;
+} {
+  return {
+    nearOffset: wetRoadHighlightOffset(segmentIndex),
+    farOffset: wetRoadHighlightOffset(segmentIndex + 1),
+  };
 }
 
 /** Four guardrail ribbon corners for one side of one segment. */
